@@ -1,6 +1,5 @@
 # 生成的输出文件
-images/
-disk_report.md
+reports/
 
 # Obsidian
 .obsidian/

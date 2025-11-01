@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
+from datetime import datetime
 import squarify
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -12,8 +13,7 @@ matplotlib.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial Un
 matplotlib.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 
 CONFIG_FILE = "config.json"
-OUTPUT_FILE = "disk_report.md"
-IMAGE_DIR = "images"
+REPORTS_BASE_DIR = "reports"
 DEFAULT_CONFIG = {
     "root_path": "C:\\",
     "min_size_mb": 600,
@@ -30,6 +30,29 @@ def load_config():
         return DEFAULT_CONFIG
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def get_output_paths():
+    """生成基于年月的输出路径和文件名"""
+    now = datetime.now()
+    year_month = now.strftime("%Y-%m")  # 2025-11
+    timestamp = now.strftime("%Y%m%d_%H%M%S")  # 20251101_143025
+
+    # 创建年月文件夹
+    report_dir = os.path.join(REPORTS_BASE_DIR, year_month)
+    image_dir = os.path.join(report_dir, "images")
+    os.makedirs(image_dir, exist_ok=True)
+
+    # 生成文件名
+    md_filename = f"disk_report_{timestamp}.md"
+    md_path = os.path.join(report_dir, md_filename)
+
+    return {
+        'report_dir': report_dir,
+        'image_dir': image_dir,
+        'md_path': md_path,
+        'md_filename': md_filename
+    }
 
 
 def get_folder_size(path):
@@ -160,12 +183,9 @@ def generate_treemap(folder_path, output_image_path, max_depth=8):
     return True
 
 
-def analyze_folder_parallel(root, min_size_bytes, max_depth=5, treemap_depth=8):
+def analyze_folder_parallel(root, min_size_bytes, image_dir, max_depth=5, treemap_depth=8):
     """并行分析目录结构，输出 Markdown（按体积排序）+ 生成treemap"""
     executor = ProcessPoolExecutor(max_workers=max(2, multiprocessing.cpu_count() - 1))
-
-    # 创建图片目录
-    os.makedirs(IMAGE_DIR, exist_ok=True)
 
     def scan_dir(path, depth=1):
         indent = "  " * (depth - 1)
@@ -198,11 +218,11 @@ def analyze_folder_parallel(root, min_size_bytes, max_depth=5, treemap_depth=8):
 
                 # 生成treemap，使用配置的深度
                 image_filename = f"{folder_name}_{hash(sub_path) % 100000}.png"
-                image_path = os.path.join(IMAGE_DIR, image_filename)
+                image_path = os.path.join(image_dir, image_filename)
 
                 if generate_treemap(sub_path, image_path, treemap_depth):
-                    # Obsidian格式嵌入图片
-                    line += f"![[{image_filename}]]\n\n"
+                    # Obsidian格式嵌入图片（相对路径）
+                    line += f"![[images/{image_filename}]]\n\n"
 
                 sub_md = ""
                 if depth < max_depth:
@@ -224,17 +244,22 @@ def main():
     treemap_depth = config.get("treemap_depth", 8)
     min_size_bytes = min_size_mb * 1024 * 1024
 
+    # 获取输出路径
+    paths = get_output_paths()
+
     print(f"开始并行分析：{root}")
     print(f"最小文件夹阈值：{min_size_mb} MB")
     print(f"Treemap深度：{treemap_depth} 层")
-    print(f"使用 {max(2, multiprocessing.cpu_count() - 1)} 个进程\n")
+    print(f"使用 {max(2, multiprocessing.cpu_count() - 1)} 个进程")
+    print(f"报告保存位置：{paths['md_path']}\n")
 
-    report = analyze_folder_parallel(root, min_size_bytes, treemap_depth=treemap_depth)
-    Path(OUTPUT_FILE).write_text(report, encoding="utf-8")
+    report = analyze_folder_parallel(root, min_size_bytes, paths['image_dir'], treemap_depth=treemap_depth)
+    Path(paths['md_path']).write_text(report, encoding="utf-8")
 
     elapsed = time.time() - start
-    print(f"\n分析完成！报告已生成：{OUTPUT_FILE}")
-    print(f"图片已保存到：{IMAGE_DIR}/")
+    print(f"\n分析完成！")
+    print(f"报告文件：{paths['md_path']}")
+    print(f"图片目录：{paths['image_dir']}")
     print(f"耗时：{elapsed:.1f} 秒")
 
 
