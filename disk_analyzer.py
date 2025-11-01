@@ -5,12 +5,7 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 from datetime import datetime
-import squarify
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import matplotlib
-matplotlib.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS']
-matplotlib.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+import plotly.graph_objects as go
 
 CONFIG_FILE = "config.json"
 REPORTS_BASE_DIR = "reports"
@@ -85,102 +80,123 @@ def format_size(size_bytes):
     return f"{mb:.1f}MB"
 
 
-def collect_folder_data(path, max_depth=8):
-    """递归收集文件夹和文件数据（用于treemap），区分文件和文件夹"""
-    items = []
-    size_cache = {}  # 缓存已计算的文件夹大小
+def collect_folder_data_hierarchical(path, max_depth=8, parent_id="", current_depth=0):
+    """递归收集文件夹和文件数据，构建层级关系（用于plotly treemap）"""
+    labels = []
+    parents = []
+    values = []
+    ids = []
+    item_types = []  # 'file' or 'folder'
 
-    def get_size_cached(folder_path):
-        """带缓存的文件夹大小计算"""
-        if folder_path in size_cache:
-            return size_cache[folder_path]
-        size = get_folder_size(folder_path)
-        size_cache[folder_path] = size
-        return size
+    if current_depth >= max_depth:
+        return labels, parents, values, ids, item_types
 
-    def scan_level(current_path, depth=0):
-        if depth >= max_depth:
-            return
+    try:
+        entries = list(os.scandir(path))
+    except (PermissionError, FileNotFoundError, OSError):
+        return labels, parents, values, ids, item_types
 
+    for entry in entries:
         try:
-            for entry in os.scandir(current_path):
-                try:
-                    if entry.is_file(follow_symlinks=False):
-                        size = entry.stat(follow_symlinks=False).st_size
-                        if size > 0:
-                            items.append({
-                                'name': entry.name,
-                                'size': size,
-                                'path': entry.path,
-                                'type': 'file'  # 标记为文件
-                            })
-                    elif entry.is_dir(follow_symlinks=False):
-                        sub_size = get_size_cached(entry.path)
-                        if sub_size > 0:
-                            items.append({
-                                'name': entry.name,
-                                'size': sub_size,
-                                'path': entry.path,
-                                'type': 'folder'  # 标记为文件夹
-                            })
-                            # 递归扫描子文件夹
-                            if depth < max_depth - 1:
-                                scan_level(entry.path, depth + 1)
-                except (PermissionError, FileNotFoundError, OSError):
-                    continue
-        except (PermissionError, FileNotFoundError, OSError):
-            pass
+            if entry.is_file(follow_symlinks=False):
+                size = entry.stat(follow_symlinks=False).st_size
+                if size > 1024 * 1024:  # 只记录 > 1MB 的文件
+                    item_id = f"{parent_id}/{entry.name}" if parent_id else entry.name
+                    labels.append(entry.name)
+                    parents.append(parent_id)
+                    values.append(size)
+                    ids.append(item_id)
+                    item_types.append('file')
 
-    scan_level(path)
-    return items
+            elif entry.is_dir(follow_symlinks=False):
+                folder_size = get_folder_size(entry.path)
+                if folder_size > 1024 * 1024:  # 只记录 > 1MB 的文件夹
+                    item_id = f"{parent_id}/{entry.name}" if parent_id else entry.name
+                    labels.append(entry.name)
+                    parents.append(parent_id)
+                    values.append(folder_size)
+                    ids.append(item_id)
+                    item_types.append('folder')
+
+                    # 递归收集子项
+                    if current_depth < max_depth - 1:
+                        sub_labels, sub_parents, sub_values, sub_ids, sub_types = \
+                            collect_folder_data_hierarchical(entry.path, max_depth, item_id, current_depth + 1)
+                        labels.extend(sub_labels)
+                        parents.extend(sub_parents)
+                        values.extend(sub_values)
+                        ids.extend(sub_ids)
+                        item_types.extend(sub_types)
+
+        except (PermissionError, FileNotFoundError, OSError):
+            continue
+
+    return labels, parents, values, ids, item_types
 
 
 def generate_treemap(folder_path, output_image_path, max_depth=8):
-    """为指定文件夹生成矩形分块图，区分文件和文件夹"""
+    """为指定文件夹生成嵌套矩形分块图（使用plotly）"""
     print(f"  [生成treemap] {folder_path} (深度: {max_depth})")
 
-    # 收集数据
-    items = collect_folder_data(folder_path, max_depth)
+    # 收集层级数据
+    labels, parents, values, ids, item_types = collect_folder_data_hierarchical(
+        folder_path, max_depth
+    )
 
-    if not items:
+    if not labels:
         print(f"  [跳过] {folder_path} 无可用数据")
         return False
 
-    # 按大小排序，取前50个最大项
-    items.sort(key=lambda x: x['size'], reverse=True)
-    items = items[:50]
+    # 不添加根节点，所有第一层的父节点设为空字符串
+    # 这样可以避免根节点占用空间
+    root_name = Path(folder_path).name
 
-    # 准备数据
-    sizes = [item['size'] for item in items]
-    labels = [f"{item['name']}\n{format_size(item['size'])}" for item in items]
-
-    # 根据类型生成不同颜色：文件夹用蓝色系，文件用橙色系
+    # 根据类型设置颜色
     colors = []
-    for item in items:
-        if item['type'] == 'folder':
+    for item_type in item_types:
+        if item_type == 'folder':
             colors.append('#4A90E2')  # 蓝色 - 文件夹
         else:
             colors.append('#F5A623')  # 橙色 - 文件
 
-    # 创建图形
-    fig, ax = plt.subplots(figsize=(20, 16), dpi=100)
+    # 创建 plotly treemap
+    fig = go.Figure(go.Treemap(
+        labels=labels,
+        parents=parents,
+        values=values,
+        ids=ids,
+        branchvalues="total",  # 父节点值等于所有子节点之和
+        marker=dict(
+            colors=colors,
+            line=dict(width=3, color='white'),
+            pad=dict(t=30, l=5, r=5, b=5)  # 增加顶部空间以显示标签
+        ),
+        textposition='top left',  # 标签位置改为左上角
+        textfont=dict(size=16, family='Microsoft YaHei, SimHei, Arial', color='white'),
+        hovertemplate='<b>%{label}</b><br>大小: %{value:,.0f} bytes<extra></extra>',
+        pathbar_visible=False  # 隐藏路径导航栏
+    ))
 
-    # 绘制treemap - 字体调大到14
-    squarify.plot(sizes=sizes, label=labels, color=colors, alpha=0.7,
-                  text_kwargs={'fontsize': 14, 'weight': 'bold', 'color': 'white'},
-                  ax=ax, edgecolor='white', linewidth=2)
+    fig.update_layout(
+        title=dict(
+            text=f"磁盘空间分析: {root_name}<br><sub style='color: #4A90E2;'>■ 文件夹</sub> <sub style='color: #F5A623;'>■ 文件</sub>",
+            font=dict(size=24, family='Microsoft YaHei, SimHei, Arial')
+        ),
+        width=1800,
+        height=1400,
+        margin=dict(t=120, l=10, r=10, b=10),
+        paper_bgcolor='white',
+        plot_bgcolor='white'
+    )
 
-    plt.axis('off')
-    plt.title(f"磁盘空间分析: {Path(folder_path).name}\n🔵 文件夹  🟠 文件",
-              fontsize=20, weight='bold', pad=20)
-    plt.tight_layout()
-
-    # 保存图片
-    plt.savefig(output_image_path, bbox_inches='tight', dpi=100)
-    plt.close()
-
-    print(f"  [已保存] {output_image_path}")
-    return True
+    # 保存为静态图片
+    try:
+        fig.write_image(output_image_path, format='png')
+        print(f"  [已保存] {output_image_path}")
+        return True
+    except Exception as e:
+        print(f"  [错误] 保存图片失败: {e}")
+        return False
 
 
 def analyze_folder_parallel(root, min_size_bytes, image_dir, max_depth=5, treemap_depth=8):
