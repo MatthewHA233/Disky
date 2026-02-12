@@ -1,8 +1,15 @@
 # 生成的输出文件
 reports/
+disk_report.md
 
 # Obsidian
 .obsidian/
+
+# Claude Code
+.claude/settings.local.json
+
+# Backup files
+disk_analyzer_original.py
 
 # Python
 __pycache__/
