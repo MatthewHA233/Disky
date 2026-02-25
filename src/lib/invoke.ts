@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, AiSettings, ChatMessage, Note } from "../types";
+import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, AiSettings, ChatMessage, Note, AiAnalysis, AnalyzePathInput } from "../types";
 
 export const listDrives = () => invoke<DriveInfo[]>("list_drives");
 
@@ -28,6 +28,15 @@ export const sendChatMessage = (message: string) =>
   invoke<void>("send_chat_message", { message });
 export const listChatMessages = () => invoke<ChatMessage[]>("list_chat_messages");
 export const clearChatHistory = () => invoke<void>("clear_chat_history");
+
+// AI Analysis
+export const analyzePaths = (items: AnalyzePathInput[]) =>
+  invoke<{ path: string; description: string; priority: number }[]>("analyze_paths", { items });
+export const saveAiAnalysis = (path: string, description: string, priority: number) =>
+  invoke<void>("save_ai_analysis", { path, description, priority });
+export const loadAiAnalyses = (paths: string[]) =>
+  invoke<AiAnalysis[]>("load_ai_analyses", { paths });
+export const loadAllAiAnalyses = () => invoke<AiAnalysis[]>("load_all_ai_analyses");
 
 // Notes
 export const saveNote = (path: string, content: string) =>

@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import type { DirEntry } from "../types";
+import type { AiAnalysis, DirEntry } from "../types";
 import { getChildren } from "../lib/invoke";
 import { formatSize } from "../lib/format";
+import { StarRating } from "./StarRating";
 
 interface Props {
   rootPath: string | null;
   liveChildren: DirEntry[];
   scanning: boolean;
+  analyses?: Map<string, AiAnalysis>;
+  onAnalyzePath?: (currentPath: string) => void;
+  analyzing?: boolean;
 }
 
 interface Rect {
@@ -77,7 +81,7 @@ function worstRatio(areas: number[], totalArea: number, side: number): number {
   return worst;
 }
 
-export function TreeMap({ rootPath, liveChildren, scanning }: Props) {
+export function TreeMap({ rootPath, liveChildren, scanning, analyses, onAnalyzePath, analyzing }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [path, setPath] = useState<string[]>(rootPath ? [rootPath] : []);
@@ -199,6 +203,15 @@ export function TreeMap({ rootPath, liveChildren, scanning }: Props) {
               </span>
             </span>
           ))}
+          {onAnalyzePath && currentPath && (
+            <button
+              className="btn btn-analyze"
+              disabled={analyzing}
+              onClick={() => onAnalyzePath(currentPath)}
+            >
+              {analyzing ? "分析中..." : "AI 分析"}
+            </button>
+          )}
         </div>
       )}
       <div className="treemap-canvas-wrapper" ref={wrapperRef}>
@@ -210,12 +223,23 @@ export function TreeMap({ rootPath, liveChildren, scanning }: Props) {
           onClick={handleClick}
         />
       </div>
-      {hover && (
-        <div className="treemap-tooltip">
-          {hover.entry.name} — {formatSize(hover.entry.logical_size)}
-          {hover.entry.is_dir && ` (${hover.entry.subdirs} 个目录, ${hover.entry.files} 个文件)`}
-        </div>
-      )}
+      {hover && (() => {
+        const ai = analyses?.get(hover.entry.path);
+        return (
+          <div className="treemap-tooltip">
+            <div>
+              {hover.entry.name} — {formatSize(hover.entry.logical_size)}
+              {hover.entry.is_dir && ` (${hover.entry.subdirs} 个目录, ${hover.entry.files} 个文件)`}
+            </div>
+            {ai && (
+              <div className="tooltip-ai">
+                <StarRating priority={ai.priority} />
+                <span className="tooltip-ai-desc">{ai.description}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

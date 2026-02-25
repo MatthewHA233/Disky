@@ -1,8 +1,9 @@
 import { useEffect, useState, useMemo } from "react";
-import type { DirEntry } from "../types";
+import type { AiAnalysis, DirEntry } from "../types";
 import { getChildren } from "../lib/invoke";
 import { formatSize, formatNumber } from "../lib/format";
 import { SizeBar } from "./SizeBar";
+import { StarRating } from "./StarRating";
 
 interface Props {
   rootPath: string | null;
@@ -10,6 +11,9 @@ interface Props {
   scanning: boolean;
   onSelect?: (path: string, size: number) => void;
   selected?: Map<string, number>;
+  analyses?: Map<string, AiAnalysis>;
+  onAnalyzeSelected?: () => void;
+  analyzing?: boolean;
 }
 
 interface TreeNode extends DirEntry {
@@ -18,7 +22,7 @@ interface TreeNode extends DirEntry {
   loaded?: boolean;
 }
 
-export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, selected }: Props) {
+export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, selected, analyses, onAnalyzeSelected, analyzing }: Props) {
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -131,6 +135,14 @@ export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, sele
               </>
             )}
           </span>
+          <span className="tree-col-ai">
+            {analyses?.get(item.path) && (
+              <StarRating priority={analyses.get(item.path)!.priority} />
+            )}
+          </span>
+          <span className="tree-col-desc">
+            {analyses?.get(item.path)?.description ?? ""}
+          </span>
         </div>
         {!scanning && isTreeNode && node.expanded && node.children && (
           <div className="tree-children">
@@ -157,6 +169,19 @@ export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, sele
         <span className="tree-hdr-files">文件数</span>
         <span className="tree-hdr-dirs">目录数</span>
         <span className="tree-hdr-pct">占比</span>
+        <span className="tree-hdr-ai">
+          推荐清理程度
+          {onAnalyzeSelected && selected && selected.size > 0 && (
+            <button
+              className="btn btn-analyze btn-analyze-sm"
+              disabled={analyzing}
+              onClick={onAnalyzeSelected}
+            >
+              {analyzing ? "分析中..." : `分析选中 (${selected.size})`}
+            </button>
+          )}
+        </span>
+        <span className="tree-hdr-desc">描述</span>
       </div>
       <div className="tree-body">
         {displayItems.map((item) => renderRow(item, 0, totalSize))}

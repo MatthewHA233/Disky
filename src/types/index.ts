@@ -84,3 +84,17 @@ export interface Note {
   created_at: string;
   updated_at: string;
 }
+
+export interface AiAnalysis {
+  path: string;
+  description: string;
+  priority: number;
+  created_at: string;
+}
+
+export interface AnalyzePathInput {
+  path: string;
+  name: string;
+  size: number;
+  is_dir: boolean;
+}
