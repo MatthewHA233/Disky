@@ -8,8 +8,20 @@ disk_report.md
 # Claude Code
 .claude/settings.local.json
 
-# Backup files
-disk_analyzer_original.py
+# Tauri / Node
+node_modules/
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/gen/
+dist/
+
+# Data
+*.csv
+*.db
+
+# Third-party binaries & temp scripts
+WinDirStat.exe
+scan_dir.py
 
 # Python
 __pycache__/
