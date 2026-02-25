@@ -56,3 +56,31 @@ export interface ScanTreeEvent {
   scanning: boolean;
   current_dir: string;
 }
+
+export interface AiSettings {
+  api_key: string;
+  base_url: string;
+  model_id: string;
+  url_mode: string; // "append" | "raw"
+}
+
+export interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export interface ChatStreamEvent {
+  delta: string;
+  done: boolean;
+  error: string | null;
+}
+
+export interface Note {
+  id: number;
+  path: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}

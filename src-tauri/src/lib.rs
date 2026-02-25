@@ -17,6 +17,15 @@ pub fn run() {
             commands::history::save_scan,
             commands::history::list_scans,
             commands::history::compare_scans,
+            commands::ai::load_ai_settings,
+            commands::ai::save_ai_settings,
+            commands::ai::send_chat_message,
+            commands::ai::list_chat_messages,
+            commands::ai::clear_chat_history,
+            commands::notes::save_note,
+            commands::notes::get_notes_for_path,
+            commands::notes::delete_note,
+            commands::notes::list_all_notes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

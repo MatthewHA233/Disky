@@ -6,9 +6,11 @@ interface Props {
   onHistory: () => void;
   onClean: () => void;
   cleanCount: number;
+  onToggleChat: () => void;
+  chatOpen: boolean;
 }
 
-export function Header({ scan, onHistory, onClean, cleanCount }: Props) {
+export function Header({ scan, onHistory, onClean, cleanCount, onToggleChat, chatOpen }: Props) {
   const scanning = scan.status === "scanning";
   const canClean = scan.status === "done" && cleanCount > 0;
 
@@ -54,6 +56,12 @@ export function Header({ scan, onHistory, onClean, cleanCount }: Props) {
           onClick={onClean}
         >
           清理{cleanCount > 0 ? ` (${cleanCount})` : ""}
+        </button>
+        <button
+          className={`btn${chatOpen ? " btn-primary" : ""}`}
+          onClick={onToggleChat}
+        >
+          AI 助手
         </button>
       </div>
     </header>
