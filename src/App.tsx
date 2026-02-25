@@ -31,6 +31,23 @@ export default function App() {
 
   const scanning = scan.status === "scanning";
 
+  // Shared navigation path (breadcrumb stack)
+  const [navPath, setNavPath] = useState<string[]>([]);
+
+  // Reset navPath when rootPath changes
+  useEffect(() => {
+    if (scan.rootPath) setNavPath([scan.rootPath]);
+    else setNavPath([]);
+  }, [scan.rootPath]);
+
+  const handleNavigate = useCallback((path: string) => {
+    setNavPath(prev => {
+      const idx = prev.indexOf(path);
+      if (idx >= 0) return prev.slice(0, idx + 1);
+      return [...prev, path];
+    });
+  }, []);
+
   // Clear selections when a new scan starts or drive changes
   useEffect(() => {
     setSelected(new Map());
@@ -138,6 +155,8 @@ export default function App() {
                 analyses={aiAnalysis.analyses}
                 onAnalyzeSelected={handleAnalyzeSelected}
                 analyzing={aiAnalysis.analyzing}
+                navPath={navPath}
+                onNavigate={handleNavigate}
               />
             }
             bottom={
@@ -148,6 +167,8 @@ export default function App() {
                 analyses={aiAnalysis.analyses}
                 onAnalyzePath={handleAnalyzeTreeMapPath}
                 analyzing={aiAnalysis.analyzing}
+                navPath={navPath}
+                onNavigate={handleNavigate}
               />
             }
           />

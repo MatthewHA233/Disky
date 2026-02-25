@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import type { AiAnalysis, DirEntry } from "../types";
 import { getChildren } from "../lib/invoke";
 import { formatSize, formatNumber } from "../lib/format";
@@ -14,6 +14,8 @@ interface Props {
   analyses?: Map<string, AiAnalysis>;
   onAnalyzeSelected?: () => void;
   analyzing?: boolean;
+  navPath: string[];
+  onNavigate: (path: string) => void;
 }
 
 interface TreeNode extends DirEntry {
@@ -22,9 +24,10 @@ interface TreeNode extends DirEntry {
   loaded?: boolean;
 }
 
-export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, selected, analyses, onAnalyzeSelected, analyzing }: Props) {
+export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, selected, analyses, onAnalyzeSelected, analyzing, navPath, onNavigate }: Props) {
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
+  const selfNav = useRef(false);
 
   // Scanning mode: use liveChildren sorted by size
   const sortedLive = useMemo(() => {
@@ -79,6 +82,55 @@ export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, sele
     setNodes(await toggle(nodes));
   };
 
+  const handleDirClick = (path: string) => {
+    selfNav.current = true;
+    toggleNode(path);
+    onNavigate(path);
+  };
+
+  // Auto-expand tree when external navigation changes (e.g. from TreeMap)
+  useEffect(() => {
+    if (selfNav.current) {
+      selfNav.current = false;
+      return;
+    }
+    if (scanning || navPath.length <= 1 || nodes.length === 0) return;
+
+    const ensureExpanded = async (list: TreeNode[], target: string): Promise<TreeNode[]> => {
+      const result: TreeNode[] = [];
+      for (const node of list) {
+        if (node.path === target) {
+          if (!node.loaded && node.is_dir) {
+            const kids = await getChildren(node.path, 200);
+            result.push({
+              ...node,
+              expanded: true,
+              loaded: true,
+              children: kids.map((k) => ({ ...k, expanded: false, loaded: false })),
+            });
+          } else {
+            result.push({ ...node, expanded: true });
+          }
+        } else if (node.children) {
+          result.push({ ...node, children: await ensureExpanded(node.children, target) });
+        } else {
+          result.push(node);
+        }
+      }
+      return result;
+    };
+
+    const expandToNavPath = async () => {
+      let updated = nodes;
+      for (let i = 1; i < navPath.length; i++) {
+        updated = await ensureExpanded(updated, navPath[i]);
+      }
+      setNodes(updated);
+    };
+
+    expandToNavPath();
+  }, [navPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const renderRow = (item: DirEntry | TreeNode, depth: number, parentSize: number) => {
     const node = item as TreeNode;
     const isTreeNode = "expanded" in node;
@@ -90,7 +142,7 @@ export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, sele
         <div
           className="tree-row"
           style={{ paddingLeft: depth * 20 }}
-          onClick={() => !scanning && item.is_dir && toggleNode(item.path)}
+          onClick={() => !scanning && item.is_dir && handleDirClick(item.path)}
         >
           {onSelect && !scanning && (
             <input

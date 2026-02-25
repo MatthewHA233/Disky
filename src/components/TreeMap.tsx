@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useCallback, useMemo, useState } from "react";
 import type { AiAnalysis, DirEntry } from "../types";
 import { getChildren } from "../lib/invoke";
 import { formatSize } from "../lib/format";
@@ -11,6 +11,8 @@ interface Props {
   analyses?: Map<string, AiAnalysis>;
   onAnalyzePath?: (currentPath: string) => void;
   analyzing?: boolean;
+  navPath: string[];
+  onNavigate: (path: string) => void;
 }
 
 interface Rect {
@@ -81,21 +83,14 @@ function worstRatio(areas: number[], totalArea: number, side: number): number {
   return worst;
 }
 
-export function TreeMap({ rootPath, liveChildren, scanning, analyses, onAnalyzePath, analyzing }: Props) {
+export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analyzing, navPath, onNavigate }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const [path, setPath] = useState<string[]>(rootPath ? [rootPath] : []);
   const [rects, setRects] = useState<Rect[]>([]);
   const [hover, setHover] = useState<Rect | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
-  // Reset path on rootPath change
-  useEffect(() => {
-    if (rootPath) setPath([rootPath]);
-    else setPath([]);
-  }, [rootPath]);
-
-  const currentPath = path[path.length - 1];
+  const currentPath = navPath[navPath.length - 1];
 
   // Filter live children with size > 0 for treemap
   const liveFiltered = useMemo(() => {
@@ -184,21 +179,21 @@ export function TreeMap({ rootPath, liveChildren, scanning, analyses, onAnalyzeP
   const handleClick = (e: React.MouseEvent) => {
     if (scanning) return;
     const r = findRect(e);
-    if (r?.entry.is_dir) setPath([...path, r.entry.path]);
+    if (r?.entry.is_dir) onNavigate(r.entry.path);
   };
 
   const goBack = (idx: number) => {
-    if (!scanning) setPath(path.slice(0, idx + 1));
+    if (!scanning) onNavigate(navPath[idx]);
   };
 
   return (
     <div className="treemap-container">
-      {!scanning && path.length > 0 && (
+      {!scanning && navPath.length > 0 && (
         <div className="breadcrumb">
-          {path.map((p, i) => (
+          {navPath.map((p, i) => (
             <span key={p}>
               {i > 0 && <span className="bc-sep"> &rsaquo; </span>}
-              <span className={`bc-item ${i === path.length - 1 ? "active" : ""}`} onClick={() => goBack(i)}>
+              <span className={`bc-item ${i === navPath.length - 1 ? "active" : ""}`} onClick={() => goBack(i)}>
                 {p.split("\\").pop() || p}
               </span>
             </span>
