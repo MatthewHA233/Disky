@@ -5,6 +5,15 @@ import { listDrives, scanDisk } from "../lib/invoke";
 
 export type ScanStatus = "idle" | "scanning" | "done" | "error";
 
+interface DriveSnapshot {
+  status: ScanStatus;
+  progress: ScanProgressEvent | null;
+  liveChildren: DirEntry[];
+  currentDir: string;
+  rootPath: string | null;
+  errorMsg: string;
+}
+
 export interface ScanSession {
   drives: DriveInfo[];
   selectedDrive: string | null;
@@ -21,7 +30,7 @@ export interface ScanSession {
 
 export function useScanSession(): ScanSession {
   const [drives, setDrives] = useState<DriveInfo[]>([]);
-  const [selectedDrive, setSelectedDrive] = useState<string | null>(null);
+  const [selectedDrive, setSelectedDriveRaw] = useState<string | null>(null);
   const [status, setStatus] = useState<ScanStatus>("idle");
   const [progress, setProgress] = useState<ScanProgressEvent | null>(null);
   const [liveChildren, setLiveChildren] = useState<DirEntry[]>([]);
@@ -33,6 +42,10 @@ export function useScanSession(): ScanSession {
   const unlistenTreeRef = useRef<UnlistenFn | null>(null);
   const skipResetRef = useRef(false);
 
+  // Per-drive state cache
+  const cacheRef = useRef<Map<string, DriveSnapshot>>(new Map());
+  const prevDriveRef = useRef<string | null>(null);
+
   useEffect(() => {
     listDrives()
       .then(setDrives)
@@ -43,19 +56,57 @@ export function useScanSession(): ScanSession {
     };
   }, []);
 
-  // Reset all scan state when switching drives
+  // Wrap setSelectedDrive to save/restore cache
+  const setSelectedDrive = useCallback((drive: string | null) => {
+    setSelectedDriveRaw(drive);
+  }, []);
+
+  // Handle drive switching: save old state, restore or reset
   useEffect(() => {
     if (skipResetRef.current) {
       skipResetRef.current = false;
+      prevDriveRef.current = selectedDrive;
       return;
     }
+
+    const prev = prevDriveRef.current;
+
+    // Save current state for the previous drive
+    if (prev) {
+      cacheRef.current.set(prev, {
+        status,
+        progress,
+        liveChildren,
+        currentDir,
+        rootPath,
+        errorMsg,
+      });
+    }
+
+    // Try to restore from cache for the new drive
+    if (selectedDrive) {
+      const cached = cacheRef.current.get(selectedDrive);
+      if (cached) {
+        setStatus(cached.status);
+        setProgress(cached.progress);
+        setLiveChildren(cached.liveChildren);
+        setCurrentDir(cached.currentDir);
+        setRootPath(cached.rootPath);
+        setErrorMsg(cached.errorMsg);
+        prevDriveRef.current = selectedDrive;
+        return;
+      }
+    }
+
+    // No cache — reset to idle
     setStatus("idle");
     setProgress(null);
     setLiveChildren([]);
     setCurrentDir("");
     setRootPath(null);
     setErrorMsg("");
-  }, [selectedDrive]);
+    prevDriveRef.current = selectedDrive;
+  }, [selectedDrive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startScan = useCallback(async () => {
     if (!selectedDrive || status === "scanning") return;
@@ -90,9 +141,20 @@ export function useScanSession(): ScanSession {
 
     try {
       await scanDisk(selectedDrive);
+      const newRootPath = selectedDrive.replace(/\\$/, "");
       setStatus("done");
-      setRootPath(selectedDrive.replace(/\\$/, ""));
+      setRootPath(newRootPath);
       setCurrentDir("");
+
+      // Update cache immediately after scan completes
+      cacheRef.current.set(selectedDrive, {
+        status: "done",
+        progress: null,
+        liveChildren: [],  // will be set by the state already
+        currentDir: "",
+        rootPath: newRootPath,
+        errorMsg: "",
+      });
     } catch (e) {
       setStatus("error");
       setErrorMsg(String(e));
@@ -111,7 +173,7 @@ export function useScanSession(): ScanSession {
     )?.mount_point;
 
     skipResetRef.current = true;
-    setSelectedDrive(matchDrive ?? root);
+    setSelectedDriveRaw(matchDrive ?? root);
     setStatus("done");
     setRootPath(root);
     setLiveChildren(children);

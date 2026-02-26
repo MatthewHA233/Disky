@@ -32,6 +32,20 @@ pub fn run() {
             commands::notes::get_notes_for_path,
             commands::notes::delete_note,
             commands::notes::list_all_notes,
+            commands::context_menu::open_path,
+            commands::context_menu::show_in_explorer,
+            commands::context_menu::open_in_terminal,
+            commands::context_menu::show_properties,
+            commands::context_menu::empty_folder,
+            commands::context_menu::pick_folder_and_move,
+            commands::context_menu::refresh_scan_node,
+            commands::tags::list_tags,
+            commands::tags::create_tag,
+            commands::tags::rename_tag,
+            commands::tags::delete_tag,
+            commands::tags::toggle_tag,
+            commands::tags::get_tags_for_paths,
+            commands::tags::list_tagged_paths,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

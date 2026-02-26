@@ -26,14 +26,26 @@ cd src-tauri && cargo xwin build
 
 ```bash
 npx tsc --noEmit                          # 前端
-cd src-tauri && cargo xwin check          # 后端
+# 后端：禁止用 cargo xwin check（~5.5GB 无用产物）
+# 直接 cargo xwin build 即可，编译本身就会检查
+```
+
+构建 Windows 安装包（MSI + NSIS EXE）：
+
+```bash
+npx tauri build --runner cargo-xwin
+# 产物位置：
+# src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/
+# src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/
 ```
 
 ## 环境注意事项
 
 - Rust 编译必须用 `cargo xwin`，不能直接 `cargo build`
 - D 盘空间紧张，注意 `target/` 缓存膨胀
-- `target/debug` 是 host 默认目标产物（无用），实际产物在 `target/x86_64-pc-windows-msvc/`
+- **禁止** `cargo xwin check` — 会产生 ~5.5GB 无用 debug 产物
+- **禁止自主使用 `cargo xwin build --release`** — release 编译产物极大，会撑爆 D 盘。除非用户明确要求，否则一律使用 `cargo xwin build`（debug 模式）
+- `target/debug` 是 host 默认目标产物（无用），实际产物在 `target/x86_64-pc-windows-msvc/debug/`
 
 ## 项目结构
 

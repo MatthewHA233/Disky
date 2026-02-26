@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import type { AiAnalysis, DirEntry } from "../types";
+import type { AiAnalysis, DirEntry, FileTag } from "../types";
 import { getChildren } from "../lib/invoke";
 import { formatSize, formatNumber } from "../lib/format";
-import { SizeBar } from "./SizeBar";
 import { StarRating } from "./StarRating";
 import { ChevronRight, ChevronDown, FolderOpen, File, Loader2, Sparkles } from "lucide-react";
 import gsap from "gsap";
@@ -19,6 +18,9 @@ interface Props {
   analyzing?: boolean;
   navPath: string[];
   onNavigate: (path: string) => void;
+  onContextMenu?: (entry: DirEntry, x: number, y: number) => void;
+  pathTags?: Map<string, FileTag[]>;
+  onRemoveTag?: (path: string, tagId: number) => void;
 }
 
 interface TreeNode extends DirEntry {
@@ -27,7 +29,7 @@ interface TreeNode extends DirEntry {
   loaded?: boolean;
 }
 
-export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, selected, analyses, onAnalyzeSelected, analyzing, navPath, onNavigate }: Props) {
+export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, selected, analyses, onAnalyzeSelected, analyzing, navPath, onNavigate, onContextMenu, pathTags, onRemoveTag }: Props) {
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const selfNav = useRef(false);
@@ -160,12 +162,18 @@ export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, sele
       <div key={item.path}>
         <div
           className={cn(
-            "tree-row-anim group flex items-center gap-2 px-2 py-0.5 cursor-pointer border-l-2 transition-all hover:bg-[#FFFFFF]/5",
+            "tree-row-anim group flex items-center gap-1.5 px-1 py-0.5 cursor-pointer border-l-2 transition-all hover:bg-[#FFFFFF]/5",
             isSelected ? "border-[#C9A84C] bg-[#C9A84C]/5" : "border-transparent text-[#888899]",
             hasAnalysis && !isSelected && "border-[#7B61FF]/30"
           )}
-          style={{ paddingLeft: `${depth * 1.25 + 0.5}rem` }}
+          style={{ paddingLeft: `${depth * 1.25 + 0.25}rem` }}
           onClick={() => !scanning && item.is_dir && handleDirClick(item.path)}
+          onContextMenu={(e) => {
+            if (onContextMenu && !scanning) {
+              e.preventDefault();
+              onContextMenu(item, e.clientX, e.clientY);
+            }
+          }}
         >
           {onSelect && !scanning && (
             <div
@@ -191,59 +199,66 @@ export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, sele
             )}
           </span>
 
-          <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 w-[15%] min-w-0 shrink-0">
             {item.is_dir ? (
               <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", isTreeNode && node.expanded ? "text-[#C9A84C]" : "text-[#C9A84C]/70")} />
             ) : (
               <File className="w-3.5 h-3.5 shrink-0 text-[#EAE6DF]/70" />
             )}
             <span className={cn(
-              "truncate font-medium transition-colors group-hover:text-[#FAF8F5] text-[11px]",
+              "break-all font-medium transition-colors group-hover:text-[#FAF8F5] text-[11px] leading-snug",
               item.is_dir ? "text-[#C9A84C]" : "text-[#EAE6DF]",
               isSelected && "text-[#C9A84C] font-semibold"
             )}>
               {item.name}
             </span>
+            {pathTags?.get(item.path)?.map((ft) => (
+              <span
+                key={ft.tag_id}
+                className="group/tag inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full shrink-0 text-[9px] font-medium leading-tight"
+                style={{ backgroundColor: `${ft.tag_color}25`, color: ft.tag_color }}
+              >
+                {ft.tag_name}
+                {onRemoveTag && (
+                  <button
+                    className="opacity-0 group-hover/tag:opacity-100 hover:text-[#E74C3C] transition-opacity -mr-0.5"
+                    onClick={(e) => { e.stopPropagation(); onRemoveTag(item.path, ft.tag_id); }}
+                    title={`移除「${ft.tag_name}」`}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
           </div>
 
-          <span className="w-20 text-right shrink-0 font-mono text-[10px]">
+          <span className="w-16 text-right shrink-0 font-mono text-[10px]">
             {isScanning ? (
-              <span className="text-[#C9A84C] animate-pulse">Scanning...</span>
+              <span className="text-[#C9A84C] animate-pulse">扫描中...</span>
             ) : (
               <span className="text-[#FAF8F5]">{formatSize(item.logical_size)}</span>
             )}
           </span>
 
-          <span className="w-16 text-right shrink-0 font-mono text-[11px] text-[#888899]">
+          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-[#888899]">
             {!isScanning && item.is_dir ? formatNumber(item.files) : "-"}
           </span>
 
-          <span className="w-16 text-right shrink-0 font-mono text-[11px] text-[#888899]">
+          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-[#888899]">
             {!isScanning && item.is_dir ? formatNumber(item.subdirs) : "-"}
           </span>
 
-          <span className="w-28 flex items-center justify-end gap-2 shrink-0 pr-2">
-            {!isScanning && (
-              <>
-                <SizeBar
-                  ratio={pct / 100}
-                  color={item.is_dir ? "#C9A84C" : "#EAE6DF"}
-                  width={60}
-                />
-                <span className="font-mono text-[11px] text-[#888899] min-w-[36px] text-right">
-                  {pct.toFixed(1)}%
-                </span>
-              </>
-            )}
+          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-[#888899]">
+            {!isScanning && `${pct.toFixed(1)}%`}
           </span>
 
-          <span className="w-32 shrink-0 flex items-center justify-center">
+          <span className="w-28 shrink-0 flex items-center justify-center">
             {analyses?.get(item.path) && (
               <StarRating priority={analyses.get(item.path)!.priority} />
             )}
           </span>
 
-          <span className="flex-1 min-w-0 truncate text-xs text-[#888899] group-hover:text-[#FAF8F5] transition-colors">
+          <span className="flex-1 min-w-0 text-xs text-[#888899] group-hover:text-[#FAF8F5] transition-colors whitespace-pre-wrap break-words leading-snug">
             {analyses?.get(item.path)?.description ?? ""}
           </span>
         </div>
@@ -260,7 +275,7 @@ export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, sele
   if (!scanning && loading) {
     return (
       <div className="h-full flex items-center justify-center text-[#C9A84C] font-mono text-sm gap-2 uppercase tracking-widest">
-        <Loader2 className="w-4 h-4 animate-spin" /> Retrieving Telemetry...
+        <Loader2 className="w-4 h-4 animate-spin" /> 加载中...
       </div>
     );
   }
@@ -268,33 +283,36 @@ export function DirectoryTree({ rootPath, liveChildren, scanning, onSelect, sele
   if (!scanning && !rootPath) {
     return (
       <div className="h-full flex items-center justify-center text-[#888899] font-mono text-sm uppercase tracking-widest">
-        System idling. Initiate scan.
+        选择硬盘并开始扫描
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full bg-[#0D0D12] rounded-2xl border border-[#2A2A35] overflow-hidden shadow-2xl">
-      <div className="flex items-center gap-3 px-4 py-3 bg-[#13131A] border-b border-[#2A2A35] shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-[#888899]">
-        <span className="flex-1 min-w-0 pl-14">Identifier</span>
-        <span className="w-24 text-right">Size</span>
-        <span className="w-16 text-right">Files</span>
-        <span className="w-16 text-right">Dirs</span>
-        <span className="w-28 text-right pr-2">Allocation</span>
-        <span className="w-32 flex items-center justify-center gap-2">
-          AI Status
-          {onAnalyzeSelected && selected && selected.size > 0 && (
+      <div className="flex items-center gap-1.5 px-1 py-2 bg-[#13131A] border-b border-[#2A2A35] shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-[#888899]">
+        {onSelect && !scanning && <span className="w-4 shrink-0" />}
+        <span className="w-4 shrink-0" />
+        <span className="w-[15%] min-w-0 shrink-0">名称</span>
+        <span className="w-16 text-right shrink-0">大小</span>
+        <span className="w-14 text-right shrink-0">文件</span>
+        <span className="w-14 text-right shrink-0">目录</span>
+        <span className="w-14 text-right shrink-0">占比</span>
+        <span className="w-28 shrink-0 flex items-center justify-center">
+          {onAnalyzeSelected && selected && selected.size > 0 ? (
             <button
               className="px-2 py-0.5 rounded bg-[#7B61FF]/20 text-[#7B61FF] border border-[#7B61FF]/40 hover:bg-[#7B61FF]/30 transition-colors flex items-center gap-1"
               disabled={analyzing}
               onClick={onAnalyzeSelected}
             >
               {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-              {analyzing ? "ANALYZING" : `ANALYZE (${selected.size})`}
+              {analyzing ? "分析中" : `分析 (${selected.size})`}
             </button>
+          ) : (
+            "AI 分析"
           )}
         </span>
-        <span className="flex-1 min-w-0">Telemetry Notes</span>
+        <span className="flex-1 min-w-0">AI 注释</span>
       </div>
       <div ref={listRef} className="flex-1 overflow-y-auto py-2 custom-scrollbar">
         {displayItems.map((item) => renderRow(item, 0, totalSize))}

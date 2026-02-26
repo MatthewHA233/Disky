@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, Note, AiAnalysis, AnalyzePathInput } from "../types";
+import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath } from "../types";
 
 export const listDrives = () => invoke<DriveInfo[]>("list_drives");
 
@@ -49,3 +49,33 @@ export const getNotesForPath = (path: string) =>
   invoke<Note[]>("get_notes_for_path", { path });
 export const deleteNote = (id: number) => invoke<void>("delete_note", { id });
 export const listAllNotes = () => invoke<Note[]>("list_all_notes");
+
+// Context Menu
+export const openPath = (path: string) =>
+  invoke<void>("open_path", { path });
+export const showInExplorer = (path: string) =>
+  invoke<void>("show_in_explorer", { path });
+export const openInTerminal = (path: string, shell: string) =>
+  invoke<void>("open_in_terminal", { path, shell });
+export const showProperties = (path: string) =>
+  invoke<void>("show_properties", { path });
+export const emptyFolder = (path: string, toTrash: boolean) =>
+  invoke<EmptyFolderResult>("empty_folder", { path, toTrash });
+export const pickFolderAndMove = (path: string) =>
+  invoke<MoveResult>("pick_folder_and_move", { path });
+export const refreshScanNode = (path: string) =>
+  invoke<DirEntry[]>("refresh_scan_node", { path });
+
+// Tags
+export const listTags = () => invoke<Tag[]>("list_tags");
+export const createTag = (name: string, color: string) =>
+  invoke<Tag>("create_tag", { name, color });
+export const renameTag = (id: number, name: string) =>
+  invoke<void>("rename_tag", { id, name });
+export const deleteTag = (id: number) => invoke<void>("delete_tag", { id });
+export const toggleTag = (path: string, tagId: number) =>
+  invoke<boolean>("toggle_tag", { path, tagId });
+export const getTagsForPaths = (paths: string[]) =>
+  invoke<FileTag[]>("get_tags_for_paths", { paths });
+export const listTaggedPaths = (tagId?: number) =>
+  invoke<TaggedPath[]>("list_tagged_paths", { tagId: tagId ?? null });

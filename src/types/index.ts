@@ -105,3 +105,44 @@ export interface AnalyzePathInput {
   size: number;
   is_dir: boolean;
 }
+
+export interface EmptyFolderResult {
+  deleted: number;
+  errors: string[];
+}
+
+export interface MoveResult {
+  new_path: string;
+}
+
+export interface ContextMenuTarget {
+  entry: DirEntry;
+  x: number;
+  y: number;
+}
+
+export interface Tag {
+  id: number;
+  name: string;
+  color: string;
+  is_preset: boolean;
+  created_at: string;
+}
+
+export interface FileTag {
+  id: number;
+  path: string;
+  tag_id: number;
+  tag_name: string;
+  tag_color: string;
+  created_at: string;
+}
+
+export interface TaggedPath {
+  path: string;
+  name: string;
+  tag_id: number;
+  tag_name: string;
+  tag_color: string;
+  tagged_at: string;
+}

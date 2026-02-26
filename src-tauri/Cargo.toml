@@ -1,6 +1,6 @@
 [package]
 name = "disky"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 
 [lib]
@@ -20,6 +20,7 @@ trash = "5"
 rusqlite = { version = "0.31", features = ["bundled"] }
 bincode = "1"
 sysinfo = "0.30"
+rayon = "1"
 reqwest = { version = "0.12", features = ["stream", "json", "rustls-tls"], default-features = false }
 futures = "0.3"
 
