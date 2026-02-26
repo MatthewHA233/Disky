@@ -41,6 +41,13 @@ export interface ScanRecord {
   drive: string;
   entry_count: number;
   created_at: string;
+  has_tree: boolean;
+}
+
+export interface LoadScanResult {
+  drive: string;
+  root_path: string;
+  children: DirEntry[];
 }
 
 export interface DiffEntry {

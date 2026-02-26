@@ -4,9 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Disky</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600;1,700&display=swap" rel="stylesheet">
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="bg-[#0D0D12] text-[#FAF8F5] antialiased selection:bg-[#C9A84C] selection:text-[#0D0D12] overflow-hidden">
+    <!-- SVG Noise Overlays for Cinematic Texture -->
+    <svg class="pointer-events-none fixed inset-0 z-[9999] h-full w-full opacity-[0.05]" xmlns="http://www.w3.org/2000/svg">
+      <filter id="noiseFilter">
+        <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" />
+      </filter>
+      <rect width="100%" height="100%" filter="url(#noiseFilter)" />
+    </svg>
+
+    <div id="root" class="h-screen w-screen flex flex-col font-sans"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

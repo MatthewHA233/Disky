@@ -1,8 +1,11 @@
 import { useEffect, useRef, useCallback, useMemo, useState } from "react";
 import type { AiAnalysis, DirEntry } from "../types";
 import { getChildren } from "../lib/invoke";
-import { formatSize } from "../lib/format";
+import { formatSize, formatNumber } from "../lib/format";
 import { StarRating } from "./StarRating";
+import { ChevronRight, Loader2, Sparkles } from "lucide-react";
+import gsap from "gsap";
+import { cn } from "../lib/utils";
 
 interface Props {
   rootPath: string | null;
@@ -86,19 +89,28 @@ function worstRatio(areas: number[], totalArea: number, side: number): number {
 export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analyzing, navPath, onNavigate }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const bgRef = useRef<HTMLDivElement>(null);
   const [rects, setRects] = useState<Rect[]>([]);
   const [hover, setHover] = useState<Rect | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
   const currentPath = navPath[navPath.length - 1];
 
-  // Filter live children with size > 0 for treemap
+  // GSAP animation on mount
+  useEffect(() => {
+    if (bgRef.current) {
+      gsap.fromTo(bgRef.current,
+        { opacity: 0, scale: 0.98 },
+        { opacity: 1, scale: 1, duration: 0.6, ease: "power2.out" }
+      );
+    }
+  }, [currentPath]);
+
   const liveFiltered = useMemo(() => {
     return liveChildren.filter((c) => c.logical_size > 0)
       .sort((a, b) => b.logical_size - a.logical_size);
   }, [liveChildren]);
 
-  // Track container size via ResizeObserver
   useEffect(() => {
     const el = wrapperRef.current;
     if (!el) return;
@@ -115,7 +127,6 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
     return () => observer.disconnect();
   }, []);
 
-  // Load treemap data whenever size, scanning state, or path changes
   const load = useCallback(async () => {
     if (size.w <= 0 || size.h <= 0) return;
     if (scanning) {
@@ -132,7 +143,6 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
 
   useEffect(() => { load(); }, [load]);
 
-  // Canvas drawing
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || size.w <= 0 || size.h <= 0) return;
@@ -146,23 +156,37 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
 
     for (const r of rects) {
       const isHover = hover?.entry.path === r.entry.path;
+
+      // Midnight Luxury block styling
+      // Directories: deep obsidian -> slate -> champagne hover
+      // Files: champagne -> muted -> white hover
       ctx.fillStyle = r.entry.is_dir
-        ? (isHover ? "#5aafff" : "#3d7ac7")
-        : (isHover ? "#f0a850" : "#e8943a");
+        ? (isHover ? "#C9A84C" : "#2A2A35")
+        : (isHover ? "#FAF8F5" : "#EAE6DF");
+
+      // Inner shadow/border effect simulating gap
       ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
 
-      if (r.w > 40 && r.h > 16) {
-        ctx.fillStyle = "#fff";
-        ctx.font = "12px Segoe UI, sans-serif";
+      // Text styling
+      const textColor = r.entry.is_dir
+        ? (isHover ? "#0D0D12" : "#FAF8F5")
+        : (isHover ? "#0D0D12" : "#0D0D12");
+
+      if (r.w > 40 && r.h > 20) {
+        ctx.fillStyle = textColor;
+        ctx.font = "500 12px Inter, sans-serif";
         const label = r.entry.name.length > r.w / 7
           ? r.entry.name.slice(0, Math.floor(r.w / 7)) + "\u2026"
           : r.entry.name;
-        ctx.fillText(label, r.x + 4, r.y + 14);
+        // Vertically center text if it's a short block
+        ctx.fillText(label, r.x + 8, r.y + 18);
       }
-      if (r.w > 50 && r.h > 30) {
-        ctx.fillStyle = "rgba(255,255,255,0.6)";
-        ctx.font = "10px Segoe UI, sans-serif";
-        ctx.fillText(formatSize(r.entry.logical_size), r.x + 4, r.y + 26);
+      if (r.w > 60 && r.h > 40) {
+        ctx.fillStyle = r.entry.is_dir
+          ? (isHover ? "rgba(13,13,18,0.7)" : "rgba(250,248,245,0.5)")
+          : (isHover ? "rgba(13,13,18,0.7)" : "rgba(13,13,18,0.7)");
+        ctx.font = "11px 'JetBrains Mono', monospace";
+        ctx.fillText(formatSize(r.entry.logical_size), r.x + 8, r.y + 34);
       }
     }
   }, [rects, hover, size]);
@@ -187,49 +211,67 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
   };
 
   return (
-    <div className="treemap-container">
+    <div className="flex flex-col h-full bg-[#0D0D12] overflow-hidden" ref={bgRef}>
       {!scanning && navPath.length > 0 && (
-        <div className="breadcrumb">
+        <div className="flex items-center gap-2 px-6 py-3 border-b border-[#2A2A35] shrink-0 font-mono text-xs overflow-x-auto custom-scrollbar">
           {navPath.map((p, i) => (
-            <span key={p}>
-              {i > 0 && <span className="bc-sep"> &rsaquo; </span>}
-              <span className={`bc-item ${i === navPath.length - 1 ? "active" : ""}`} onClick={() => goBack(i)}>
+            <div key={p} className="flex items-center gap-2 shrink-0">
+              {i > 0 && <ChevronRight className="w-3 h-3 text-[#555]" />}
+              <span
+                className={cn(
+                  "cursor-pointer transition-colors px-2 py-1 rounded hover:bg-[#2A2A35]",
+                  i === navPath.length - 1 ? "text-[#C9A84C] bg-[#C9A84C]/10" : "text-[#888899]"
+                )}
+                onClick={() => goBack(i)}
+              >
                 {p.split("\\").pop() || p}
               </span>
-            </span>
+            </div>
           ))}
+          <div className="flex-1 min-w-[20px]" />
           {onAnalyzePath && currentPath && (
             <button
-              className="btn btn-analyze"
+              className="magnetic-btn shrink-0 flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#13131A] border border-[#C9A84C] text-[#C9A84C] hover:bg-[#C9A84C] hover:text-[#0D0D12] transition-colors"
               disabled={analyzing}
               onClick={() => onAnalyzePath(currentPath)}
             >
-              {analyzing ? "分析中..." : "AI 分析"}
+              {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {analyzing ? "ANALYZING..." : "AI STRUCTURAL ANALYSIS"}
             </button>
           )}
         </div>
       )}
-      <div className="treemap-canvas-wrapper" ref={wrapperRef}>
-        <canvas
-          ref={canvasRef}
-          style={{ width: size.w, height: size.h, cursor: scanning ? "default" : "pointer" }}
-          onMouseMove={(e) => setHover(findRect(e))}
-          onMouseLeave={() => setHover(null)}
-          onClick={handleClick}
-        />
+
+      <div className="flex-1 min-h-0 relative p-0 border border-[#2A2A35] rounded-b-2xl" ref={wrapperRef}>
+        <div className="absolute inset-0 overflow-hidden bg-[#13131A]">
+          <canvas
+            ref={canvasRef}
+            style={{ width: size.w, height: size.h, cursor: scanning ? "default" : "crosshair", display: "block" }}
+            onMouseMove={(e) => setHover(findRect(e))}
+            onMouseLeave={() => setHover(null)}
+            onClick={handleClick}
+          />
+        </div>
       </div>
+
       {hover && (() => {
         const ai = analyses?.get(hover.entry.path);
         return (
-          <div className="treemap-tooltip">
-            <div>
-              {hover.entry.name} — {formatSize(hover.entry.logical_size)}
-              {hover.entry.is_dir && ` (${hover.entry.subdirs} 个目录, ${hover.entry.files} 个文件)`}
+          <div className="fixed bottom-12 left-8 bg-[#13131A]/90 backdrop-blur-xl border border-[#2A2A35] rounded-xl p-4 shadow-2xl pointer-events-none z-50 animate-in fade-in slide-in-from-bottom-4 duration-200">
+            <div className="flex items-start justify-between gap-6 mb-2">
+              <span className="font-semibold text-[#FAF8F5] max-w-xs break-all">{hover.entry.name}</span>
+              <span className="font-mono text-[#C9A84C]">{formatSize(hover.entry.logical_size)}</span>
             </div>
+            {hover.entry.is_dir && (
+              <div className="font-mono text-xs text-[#888899] mb-3 flex gap-4">
+                <span>{formatNumber(hover.entry.subdirs)} DIRS</span>
+                <span>{formatNumber(hover.entry.files)} FILES</span>
+              </div>
+            )}
             {ai && (
-              <div className="tooltip-ai">
+              <div className="pt-3 border-t border-[#2A2A35] flex items-center gap-3">
                 <StarRating priority={ai.priority} />
-                <span className="tooltip-ai-desc">{ai.description}</span>
+                <span className="text-xs text-[#EAE6DF] max-w-xs">{ai.description}</span>
               </div>
             )}
           </div>

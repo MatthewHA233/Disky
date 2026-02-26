@@ -16,6 +16,7 @@ export interface ScanSession {
   rootPath: string | null;
   errorMsg: string;
   startScan: () => void;
+  loadFromHistory: (rootPath: string, children: DirEntry[]) => void;
 }
 
 export function useScanSession(): ScanSession {
@@ -30,6 +31,7 @@ export function useScanSession(): ScanSession {
 
   const unlistenProgressRef = useRef<UnlistenFn | null>(null);
   const unlistenTreeRef = useRef<UnlistenFn | null>(null);
+  const skipResetRef = useRef(false);
 
   useEffect(() => {
     listDrives()
@@ -43,6 +45,10 @@ export function useScanSession(): ScanSession {
 
   // Reset all scan state when switching drives
   useEffect(() => {
+    if (skipResetRef.current) {
+      skipResetRef.current = false;
+      return;
+    }
     setStatus("idle");
     setProgress(null);
     setLiveChildren([]);
@@ -98,6 +104,22 @@ export function useScanSession(): ScanSession {
     }
   }, [selectedDrive, status]);
 
+  const loadFromHistory = useCallback((root: string, children: DirEntry[]) => {
+    // Find the matching drive in the dropdown list
+    const matchDrive = drives.find(
+      (d) => d.mount_point.replace(/\\$/, "") === root
+    )?.mount_point;
+
+    skipResetRef.current = true;
+    setSelectedDrive(matchDrive ?? root);
+    setStatus("done");
+    setRootPath(root);
+    setLiveChildren(children);
+    setCurrentDir("");
+    setProgress(null);
+    setErrorMsg("");
+  }, [drives]);
+
   return {
     drives,
     selectedDrive,
@@ -109,5 +131,6 @@ export function useScanSession(): ScanSession {
     rootPath,
     errorMsg,
     startScan,
+    loadFromHistory,
   };
 }

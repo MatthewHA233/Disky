@@ -41,14 +41,15 @@ export function SplitPane({ top, bottom, initialRatio = 0.5 }: Props) {
   }, []);
 
   return (
-    <div className="split-pane" ref={containerRef}>
-      <div className="split-top" style={{ flex: `0 0 ${ratio * 100}%` }}>
+    <div className="flex flex-col w-full h-full overflow-hidden" ref={containerRef}>
+      <div className="relative overflow-hidden min-h-0" style={{ flex: `0 0 ${ratio * 100}%` }}>
         {top}
       </div>
-      <div className="split-handle" onMouseDown={onMouseDown}>
-        <div className="split-handle-bar" />
-      </div>
-      <div className="split-bottom" style={{ flex: 1 }}>
+      <div
+        className="flex-shrink-0 h-1.5 cursor-row-resize bg-[#0D0D12] border-y border-[#2A2A35] hover:bg-[#2A2A35] transition-colors z-20"
+        onMouseDown={onMouseDown}
+      />
+      <div className="relative overflow-hidden min-h-0" style={{ flex: 1 }}>
         {bottom}
       </div>
     </div>

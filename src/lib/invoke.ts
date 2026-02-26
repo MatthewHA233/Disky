@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, AiSettings, ChatMessage, Note, AiAnalysis, AnalyzePathInput } from "../types";
+import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, Note, AiAnalysis, AnalyzePathInput } from "../types";
 
 export const listDrives = () => invoke<DriveInfo[]>("list_drives");
 
@@ -14,6 +14,10 @@ export const deleteItems = (paths: string[], toTrash: boolean) =>
   invoke<DeleteResult[]>("delete_items", { paths, toTrash });
 
 export const saveScan = (drive: string) => invoke<number>("save_scan", { drive });
+
+export const loadScan = (id: number) => invoke<LoadScanResult>("load_scan", { id });
+
+export const deleteScan = (id: number) => invoke<void>("delete_scan", { id });
 
 export const listScans = () => invoke<ScanRecord[]>("list_scans");
 

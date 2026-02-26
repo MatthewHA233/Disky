@@ -15,6 +15,8 @@ pub fn run() {
             commands::cleanup::get_items_info,
             commands::cleanup::delete_items,
             commands::history::save_scan,
+            commands::history::load_scan,
+            commands::history::delete_scan,
             commands::history::list_scans,
             commands::history::compare_scans,
             commands::ai::load_ai_settings,

@@ -18,6 +18,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 trash = "5"
 rusqlite = { version = "0.31", features = ["bundled"] }
+bincode = "1"
 sysinfo = "0.30"
 reqwest = { version = "0.12", features = ["stream", "json", "rustls-tls"], default-features = false }
 futures = "0.3"

@@ -133,17 +133,20 @@ export default function App() {
   );
 
   return (
-    <div className="app-outer">
-      <div className="app-main">
-        <div className="app-root">
-          <Header
-            scan={scan}
-            onHistory={() => setDialog("history")}
-            onClean={() => setDialog("cleanup")}
-            cleanCount={selected.size}
-            onToggleChat={() => setChatOpen((v) => !v)}
-            chatOpen={chatOpen}
-          />
+    <div className="flex h-screen w-full bg-[#0D0D12] overflow-hidden text-[#FAF8F5] relative">
+      {/* Sidebar / Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 h-full relative">
+        <Header
+          scan={scan}
+          onHistory={() => setDialog("history")}
+          onClean={() => setDialog("cleanup")}
+          cleanCount={selected.size}
+          onToggleChat={() => setChatOpen((v) => !v)}
+          chatOpen={chatOpen}
+        />
+
+        {/* Main SplitPane Container */}
+        <div className="flex-1 flex flex-col min-h-0 relative pt-16 px-4 pb-0">
           <SplitPane
             top={
               <DirectoryTree
@@ -172,18 +175,25 @@ export default function App() {
               />
             }
           />
-          <StatusBar scan={scan} />
-          {aiAnalysis.error && (
-            <div className="ai-analysis-error">{aiAnalysis.error}</div>
-          )}
         </div>
+
+        <StatusBar scan={scan} />
+
+        {aiAnalysis.error && (
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 bg-[#E74C3C]/90 text-[#FAF8F5] px-6 py-2 rounded-full shadow-lg font-mono text-sm border border-[#E74C3C]">
+            {aiAnalysis.error}
+          </div>
+        )}
       </div>
+
       {chatOpen && (
         <ChatPanel
           chat={chat}
           onOpenSettings={() => setDialog("ai-settings")}
         />
       )}
+
+      {/* Dialogs */}
       {dialog === "cleanup" && (
         <CleanupDialog
           selected={selected}
@@ -195,6 +205,10 @@ export default function App() {
         <HistoryDialog
           drive={scan.rootPath}
           onClose={() => setDialog(null)}
+          onLoad={(rootPath, children) => {
+            scan.loadFromHistory(rootPath, children);
+            setDialog(null);
+          }}
         />
       )}
       {dialog === "ai-settings" && (
