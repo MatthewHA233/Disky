@@ -73,8 +73,8 @@ export const createTag = (name: string, color: string) =>
 export const renameTag = (id: number, name: string) =>
   invoke<void>("rename_tag", { id, name });
 export const deleteTag = (id: number) => invoke<void>("delete_tag", { id });
-export const toggleTag = (path: string, tagId: number) =>
-  invoke<boolean>("toggle_tag", { path, tagId });
+export const toggleTag = (path: string, tagId: number, isDir: boolean) =>
+  invoke<boolean>("toggle_tag", { path, tagId, isDir });
 export const getTagsForPaths = (paths: string[]) =>
   invoke<FileTag[]>("get_tags_for_paths", { paths });
 export const listTaggedPaths = (tagId?: number) =>

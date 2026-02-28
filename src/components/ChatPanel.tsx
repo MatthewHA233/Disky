@@ -65,21 +65,21 @@ export function ChatPanel({ chat, onOpenSettings }: Props) {
       <div className="flex items-center justify-between px-6 py-4 border-b border-[#2A2A35]/50 bg-[#13131A] shrink-0">
         <div className="flex items-center gap-3">
           <Bot className="w-5 h-5 text-[#C9A84C]" />
-          <span className="font-semibold text-[#FAF8F5] tracking-wide">SYSTEM AI</span>
+          <span className="font-semibold text-[#FAF8F5] tracking-wide">AI 助手</span>
         </div>
         <div className="flex items-center gap-2">
           <button
             className="magnetic-btn p-2 rounded hover:bg-[#2A2A35]/50 text-[#888899] hover:text-[#E74C3C] transition-colors"
             onClick={chat.clear}
             disabled={chat.streaming}
-            title="PURGE CONTEXT"
+            title="清空对话"
           >
             <Trash2 className="w-4 h-4" />
           </button>
           <button
             className="magnetic-btn p-2 rounded hover:bg-[#2A2A35]/50 text-[#888899] hover:text-[#FAF8F5] transition-colors"
             onClick={onOpenSettings}
-            title="AI CONFIGURATION"
+            title="AI 设置"
           >
             <Settings className="w-4 h-4" />
           </button>
@@ -90,7 +90,7 @@ export function ChatPanel({ chat, onOpenSettings }: Props) {
         {chat.messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-[#888899] font-mono text-sm opacity-50">
             <Sparkles className="w-8 h-8 mb-4 opacity-50" />
-            AWAITING INPUT...
+            等待输入...
           </div>
         )}
 
@@ -103,7 +103,7 @@ export function ChatPanel({ chat, onOpenSettings }: Props) {
               "text-[10px] font-mono mb-1.5 uppercase tracking-widest",
               msg.role === "user" ? "text-[#C9A84C]/70" : "text-[#888899]"
             )}>
-              {msg.role === "user" ? "OPERATOR" : "SYSTEM AI"}
+              {msg.role === "user" ? "我" : "AI"}
             </div>
 
             <div className={cn(
@@ -140,7 +140,7 @@ export function ChatPanel({ chat, onOpenSettings }: Props) {
           <textarea
             ref={textareaRef}
             className="w-full bg-transparent text-[#FAF8F5] text-[13px] px-4 py-3 focus:outline-none resize-none custom-scrollbar min-h-[44px] max-h-[120px]"
-            placeholder="Initialize query..."
+            placeholder="输入消息..."
             value={input}
             onChange={(e) => handleInput(e.target.value)}
             onKeyDown={handleKeyDown}

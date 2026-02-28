@@ -47,13 +47,13 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
   const handleSave = async () => {
     if (!drive) return;
     setBusy(true);
-    setMsg("ENCODING CURRENT STATE...");
+    setMsg("正在保存...");
     try {
       const id = await saveScan(drive);
-      setMsg(`STATE SAVED AS #[${id}]`);
+      setMsg(`已保存为 #[${id}]`);
       refresh();
     } catch (e) {
-      setMsg(`ENCODING FAILED: ${e}`);
+      setMsg(`保存失败: ${e}`);
     } finally {
       setBusy(false);
     }
@@ -61,7 +61,7 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
 
   const handleLoad = async (id: number) => {
     setBusy(true);
-    setMsg("RESTORING STATE...");
+    setMsg("正在恢复...");
     try {
       const result = await loadScan(id);
       if (dialogRef.current) {
@@ -72,22 +72,22 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
         onLoad(result.root_path, result.children);
       }
     } catch (e) {
-      setMsg(`RESTORE FAILED: ${e}`);
+      setMsg(`恢复失败: ${e}`);
       setBusy(false);
     }
   };
 
   const handleDelete = async (id: number) => {
     setBusy(true);
-    setMsg("PURGING RECORD...");
+    setMsg("正在删除...");
     try {
       await deleteScan(id);
-      setMsg("RECORD PURGED");
+      setMsg("已删除");
       if (idA === id) setIdA(null);
       if (idB === id) setIdB(null);
       refresh();
     } catch (e) {
-      setMsg(`PURGE FAILED: ${e}`);
+      setMsg(`删除失败: ${e}`);
     } finally {
       setBusy(false);
     }
@@ -95,13 +95,13 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
 
   const handleCompare = async () => {
     if (idA == null || idB == null || !drive) return;
-    setMsg("EXECUTING DIFFERENTIAL ANALYSIS...");
+    setMsg("正在分析差异...");
     try {
       const res = await compareScans(idA, idB, drive);
       setDiffs(res);
-      setMsg(`${res.length} ANOMALIES DETECTED`);
+      setMsg(`发现 ${res.length} 处差异`);
     } catch (e) {
-      setMsg(`ANALYSIS FAILED: ${e}`);
+      setMsg(`分析失败: ${e}`);
     }
   };
 
@@ -115,7 +115,7 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
         <div className="px-8 py-5 border-b border-[#2A2A35] flex items-center justify-between bg-[#13131A] shrink-0">
           <div className="flex items-center gap-3">
             <History className="w-5 h-5 text-[#C9A84C]" />
-            <h2 className="text-lg font-semibold text-[#FAF8F5]">TEMPORAL ARCHIVE</h2>
+            <h2 className="text-lg font-semibold text-[#FAF8F5]">历史记录</h2>
           </div>
           <button className="text-[#888899] hover:text-[#FAF8F5] transition-colors" onClick={closeDialog}>
             <XCircle className="w-6 h-6" />
@@ -125,8 +125,8 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
         <div className="flex flex-col flex-1 min-h-0 bg-[#0A0A12]">
           <div className="p-6 border-b border-[#2A2A35] flex items-center justify-between bg-[#13131A]/50 shrink-0">
             <div className="flex flex-col">
-              <span className="text-xs font-mono text-[#888899] uppercase tracking-widest">Active Sector</span>
-              <span className="text-[#FAF8F5] font-mono">{drive || "NONE"}</span>
+              <span className="text-xs font-mono text-[#888899] uppercase tracking-widest">当前磁盘</span>
+              <span className="text-[#FAF8F5] font-mono">{drive || "无"}</span>
             </div>
             {drive && (
               <button
@@ -134,7 +134,7 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
                 onClick={handleSave}
                 disabled={busy}
               >
-                <Save className="w-4 h-4" /> COMMIT CURRENT STATE
+                <Save className="w-4 h-4" /> 保存当前状态
               </button>
             )}
           </div>
@@ -143,10 +143,10 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
             {/* Left Col: Scans */}
             <div className="w-1/2 flex flex-col border-r border-[#2A2A35] bg-[#0A0A12]">
               <div className="px-6 py-3 border-b border-[#2A2A35]/50 bg-[#13131A] text-xs font-mono text-[#888899] uppercase tracking-widest flex items-center gap-2 shrink-0">
-                <Database className="w-3 h-3" /> ARCHIVED STATES
+                <Database className="w-3 h-3" /> 已保存记录
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-3">
-                {scans.length === 0 && <div className="text-center py-8 font-mono text-sm text-[#888899]">NO ARCHIVES FOUND</div>}
+                {scans.length === 0 && <div className="text-center py-8 font-mono text-sm text-[#888899]">暂无记录</div>}
                 {scans.map((s) => (
                   <div key={s.id} className="border border-[#2A2A35] rounded-xl p-4 bg-[#13131A] hover:border-[#C9A84C]/50 transition-colors group">
                     <div className="flex items-center justify-between mb-3 border-b border-[#2A2A35]/50 pb-2">
@@ -157,7 +157,7 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
                     </div>
 
                     <div className="flex items-center gap-4 mb-4 text-xs font-mono text-[#888899]">
-                      <span><span className="text-[#FAF8F5]">{formatNumber(s.entry_count)}</span> ENTITIES</span>
+                      <span><span className="text-[#FAF8F5]">{formatNumber(s.entry_count)}</span> 条目</span>
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
@@ -174,11 +174,11 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
 
                       <div className="flex gap-2">
                         {s.has_tree && (
-                          <button className="p-2 rounded bg-[#2A2A35]/50 text-[#FAF8F5] hover:bg-[#C9A84C] hover:text-[#0D0D12] transition-colors" disabled={busy} onClick={() => handleLoad(s.id)} title="Restore">
+                          <button className="p-2 rounded bg-[#2A2A35]/50 text-[#FAF8F5] hover:bg-[#C9A84C] hover:text-[#0D0D12] transition-colors" disabled={busy} onClick={() => handleLoad(s.id)} title="恢复">
                             <ArrowRight className="w-4 h-4" />
                           </button>
                         )}
-                        <button className="p-2 rounded bg-[#2A2A35]/50 text-[#888899] hover:bg-[#E74C3C] hover:text-[#0D0D12] transition-colors" disabled={busy} onClick={() => handleDelete(s.id)} title="Purge">
+                        <button className="p-2 rounded bg-[#2A2A35]/50 text-[#888899] hover:bg-[#E74C3C] hover:text-[#0D0D12] transition-colors" disabled={busy} onClick={() => handleDelete(s.id)} title="删除">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -192,7 +192,7 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
             <div className="w-1/2 flex flex-col bg-[#0D0D12]">
               <div className="px-6 py-3 border-b border-[#2A2A35]/50 bg-[#13131A] text-xs font-mono text-[#888899] uppercase tracking-widest flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
-                  <GitCompare className="w-3 h-3" /> DIFFERENTIAL MATRIX
+                  <GitCompare className="w-3 h-3" /> 差异对比
                 </div>
                 {(idA != null && idB != null) && (
                   <button
@@ -200,7 +200,7 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
                     onClick={handleCompare}
                     disabled={busy}
                   >
-                    <Search className="w-3 h-3" /> RUN ANALYSIS
+                    <Search className="w-3 h-3" /> 开始对比
                   </button>
                 )}
               </div>
@@ -209,11 +209,11 @@ export function HistoryDialog({ drive, onClose, onLoad }: Props) {
                 {idA == null || idB == null ? (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-[#888899] font-mono text-sm">
                     <GitCompare className="w-8 h-8 opacity-20 mb-4" />
-                    SELECT A AND B TO INITIATE
+                    选择 A 和 B 开始对比
                   </div>
                 ) : diffs.length === 0 ? (
                   <div className="absolute inset-0 flex items-center justify-center text-[#888899] font-mono text-sm">
-                    NO DEVIATIONS DETECTED
+                    无差异
                   </div>
                 ) : (
                   diffs.map((d) => (

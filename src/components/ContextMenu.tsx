@@ -22,7 +22,7 @@ interface Props {
   onDataChanged: () => void;
   tags?: Tag[];
   pathTags?: Map<string, FileTag[]>;
-  onToggleTag?: (path: string, tagId: number) => Promise<boolean>;
+  onToggleTag?: (path: string, tagId: number, isDir: boolean) => Promise<boolean>;
   onCreateTag?: (name: string, color: string) => Promise<Tag>;
   onDeleteTag?: (id: number) => Promise<void>;
 }
@@ -262,7 +262,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, tags, pathTag
         <TagPicker
           tags={tags}
           fileTags={fileTags}
-          onToggle={(tagId) => onToggleTag(entry.path, tagId)}
+          onToggle={(tagId) => onToggleTag(entry.path, tagId, entry.is_dir)}
           onCreate={(name, color) => onCreateTag(name, color)}
           onDeleteTag={onDeleteTag ? (id) => onDeleteTag(id) : undefined}
           onClose={onClose}

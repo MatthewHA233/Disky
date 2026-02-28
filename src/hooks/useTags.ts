@@ -18,7 +18,7 @@ export interface UseTagsReturn {
   createTag: (name: string, color: string) => Promise<Tag>;
   renameTag: (id: number, name: string) => Promise<void>;
   deleteTag: (id: number) => Promise<void>;
-  toggleTag: (path: string, tagId: number) => Promise<boolean>;
+  toggleTag: (path: string, tagId: number, isDir: boolean) => Promise<boolean>;
   loadTagsForPaths: (paths: string[]) => Promise<void>;
   loadTaggedPaths: (tagId?: number) => Promise<void>;
 }
@@ -73,8 +73,8 @@ export function useTags(): UseTagsReturn {
   );
 
   const toggleTag = useCallback(
-    async (path: string, tagId: number): Promise<boolean> => {
-      const added = await invokeToggleTag(path, tagId);
+    async (path: string, tagId: number, isDir: boolean): Promise<boolean> => {
+      const added = await invokeToggleTag(path, tagId, isDir);
       // Refresh tags for this path
       const updated = await getTagsForPaths([path]);
       setPathTags((prev) => {

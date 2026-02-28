@@ -16,6 +16,7 @@ interface Props {
   analyzing?: boolean;
   navPath: string[];
   onNavigate: (path: string) => void;
+  onContextMenu?: (entry: DirEntry, x: number, y: number) => void;
 }
 
 interface Rect {
@@ -86,7 +87,7 @@ function worstRatio(areas: number[], totalArea: number, side: number): number {
   return worst;
 }
 
-export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analyzing, navPath, onNavigate }: Props) {
+export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analyzing, navPath, onNavigate, onContextMenu }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const bgRef = useRef<HTMLDivElement>(null);
@@ -236,7 +237,7 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
               onClick={() => onAnalyzePath(currentPath)}
             >
               {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              {analyzing ? "ANALYZING..." : "AI STRUCTURAL ANALYSIS"}
+              {analyzing ? "分析中..." : "AI 分析"}
             </button>
           )}
         </div>
@@ -250,6 +251,15 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
             onMouseMove={(e) => setHover(findRect(e))}
             onMouseLeave={() => setHover(null)}
             onClick={handleClick}
+            onContextMenu={(e) => {
+              if (onContextMenu && !scanning) {
+                const r = findRect(e);
+                if (r) {
+                  e.preventDefault();
+                  onContextMenu(r.entry, e.clientX, e.clientY);
+                }
+              }
+            }}
           />
         </div>
       </div>
@@ -264,8 +274,8 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
             </div>
             {hover.entry.is_dir && (
               <div className="font-mono text-xs text-[#888899] mb-3 flex gap-4">
-                <span>{formatNumber(hover.entry.subdirs)} DIRS</span>
-                <span>{formatNumber(hover.entry.files)} FILES</span>
+                <span>{formatNumber(hover.entry.subdirs)} 目录</span>
+                <span>{formatNumber(hover.entry.files)} 文件</span>
               </div>
             )}
             {ai && (

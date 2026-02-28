@@ -16,10 +16,29 @@ import { AiSettingsDialog } from "./components/AiSettingsDialog";
 import { AnalyzeConfirmDialog } from "./components/AnalyzeConfirmDialog";
 import { ContextMenu } from "./components/ContextMenu";
 import { getChildren, getItemsInfo } from "./lib/invoke";
+import { useMemo } from "react";
 import type { AiAnalysis, AnalyzePathInput, ContextMenuTarget } from "./types";
 
 type Dialog = "cleanup" | "history" | "ai-settings" | null;
 type ViewMode = "tree" | "tags";
+
+/** Build the full ancestor chain from rootPath down to targetPath */
+function buildAncestry(targetPath: string, rootPath: string): string[] {
+  const norm = (p: string) => p.replace(/\//g, "\\").replace(/\\$/, "");
+  const normTarget = norm(targetPath);
+  const normRoot = norm(rootPath);
+  if (normTarget === normRoot) return [rootPath];
+  if (!normTarget.startsWith(normRoot + "\\")) return [rootPath, targetPath];
+  const relative = normTarget.slice(normRoot.length + 1);
+  const segments = relative.split("\\").filter(Boolean);
+  const result: string[] = [rootPath];
+  let current = normRoot;
+  for (const seg of segments) {
+    current = current + "\\" + seg;
+    result.push(current);
+  }
+  return result;
+}
 
 export default function App() {
   const scan = useScanSession();
@@ -53,6 +72,19 @@ export default function App() {
 
   // Shared navigation path (breadcrumb stack)
   const [navPath, setNavPath] = useState<string[]>([]);
+
+  // The deepest navigated path (used for tree selection highlight)
+  const activePath = navPath.length > 1 ? navPath[navPath.length - 1] : null;
+
+  // Filter tagged paths to only those belonging to the current scanned drive
+  const filteredTaggedPaths = useMemo(() => {
+    if (!scan.rootPath) return tagSystem.taggedPaths;
+    const root = scan.rootPath.toLowerCase().replace(/\\$/, "");
+    return tagSystem.taggedPaths.filter((tp) => {
+      const p = tp.path.toLowerCase().replace(/\\$/, "");
+      return p === root || p.startsWith(root + "\\");
+    });
+  }, [tagSystem.taggedPaths, scan.rootPath]);
 
   // Save/restore selections and navPath on drive switch
   useEffect(() => {
@@ -205,6 +237,7 @@ export default function App() {
           onHistory={() => setDialog("history")}
           onClean={() => setDialog("cleanup")}
           cleanCount={selected.size}
+          onClearSelected={() => setSelected(new Map())}
           onToggleChat={() => setChatOpen((v) => !v)}
           chatOpen={chatOpen}
           viewMode={viewMode}
@@ -218,15 +251,17 @@ export default function App() {
               viewMode === "tags" ? (
                 <TagBoard
                   tags={tagSystem.tags}
-                  taggedPaths={tagSystem.taggedPaths}
+                  taggedPaths={filteredTaggedPaths}
+                  analyses={aiAnalysis.analyses}
                   onNavigateToPath={(path) => {
                     setViewMode("tree");
-                    handleNavigate(path);
+                    if (scan.rootPath) {
+                      setNavPath(buildAncestry(path, scan.rootPath));
+                    } else {
+                      handleNavigate(path);
+                    }
                   }}
-                  onRemoveTag={async (path, tagId) => {
-                    await tagSystem.toggleTag(path, tagId);
-                    tagSystem.loadTaggedPaths();
-                  }}
+                  onContextMenu={handleContextMenu}
                   onCreateTag={async (name, color) => {
                     await tagSystem.createTag(name, color);
                     tagSystem.loadTaggedPaths();
@@ -240,6 +275,7 @@ export default function App() {
                     tagSystem.loadTaggedPaths();
                   }}
                   onRefresh={() => tagSystem.loadTaggedPaths()}
+                  onDataChanged={handleDataChanged}
                   key={`tags-${refreshKey}`}
                 />
               ) : (
@@ -256,7 +292,8 @@ export default function App() {
                   onNavigate={handleNavigate}
                   onContextMenu={handleContextMenu}
                   pathTags={tagSystem.pathTags}
-                  onRemoveTag={(path, tagId) => tagSystem.toggleTag(path, tagId)}
+                  onRemoveTag={(path, tagId, isDir) => tagSystem.toggleTag(path, tagId, isDir)}
+                  activePath={activePath}
                   key={`tree-${refreshKey}`}
                 />
               )

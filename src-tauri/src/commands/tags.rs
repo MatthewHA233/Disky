@@ -25,6 +25,7 @@ pub struct FileTag {
 pub struct TaggedPath {
     pub path: String,
     pub name: String,
+    pub is_dir: bool,
     pub tag_id: i64,
     pub tag_name: String,
     pub tag_color: String,
@@ -57,6 +58,9 @@ fn ensure_tags_db(app: &tauri::AppHandle) -> Result<Connection, String> {
         PRAGMA foreign_keys = ON;",
     )
     .map_err(|e| e.to_string())?;
+
+    // Migrate: add is_dir column if missing
+    conn.execute_batch("ALTER TABLE file_tags ADD COLUMN is_dir INTEGER NOT NULL DEFAULT 1;").ok();
 
     // Insert preset tags if table is empty
     let count: i64 = conn
@@ -157,7 +161,7 @@ pub fn delete_tag(app: tauri::AppHandle, id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn toggle_tag(app: tauri::AppHandle, path: String, tag_id: i64) -> Result<bool, String> {
+pub fn toggle_tag(app: tauri::AppHandle, path: String, tag_id: i64, is_dir: bool) -> Result<bool, String> {
     let conn = ensure_tags_db(&app)?;
     let exists: bool = conn
         .query_row(
@@ -176,8 +180,8 @@ pub fn toggle_tag(app: tauri::AppHandle, path: String, tag_id: i64) -> Result<bo
         Ok(false)
     } else {
         conn.execute(
-            "INSERT INTO file_tags (path, tag_id) VALUES (?1, ?2)",
-            params![path, tag_id],
+            "INSERT INTO file_tags (path, tag_id, is_dir) VALUES (?1, ?2, ?3)",
+            params![path, tag_id, is_dir as i64],
         )
         .map_err(|e| e.to_string())?;
         Ok(true)
@@ -223,13 +227,13 @@ pub fn list_tagged_paths(app: tauri::AppHandle, tag_id: Option<i64>) -> Result<V
 
     let sql = match tag_id {
         Some(_) =>
-            "SELECT ft.path, ft.tag_id, t.name, t.color, ft.created_at
+            "SELECT ft.path, ft.is_dir, ft.tag_id, t.name, t.color, ft.created_at
              FROM file_tags ft
              JOIN tags t ON t.id = ft.tag_id
              WHERE ft.tag_id = ?1
              ORDER BY ft.created_at DESC",
         None =>
-            "SELECT ft.path, ft.tag_id, t.name, t.color, ft.created_at
+            "SELECT ft.path, ft.is_dir, ft.tag_id, t.name, t.color, ft.created_at
              FROM file_tags ft
              JOIN tags t ON t.id = ft.tag_id
              ORDER BY t.id, ft.created_at DESC",
@@ -246,10 +250,11 @@ pub fn list_tagged_paths(app: tauri::AppHandle, tag_id: Option<i64>) -> Result<V
         Ok(TaggedPath {
             path,
             name,
-            tag_id: row.get(1)?,
-            tag_name: row.get(2)?,
-            tag_color: row.get(3)?,
-            tagged_at: row.get(4)?,
+            is_dir: row.get::<_, i64>(1)? != 0,
+            tag_id: row.get(2)?,
+            tag_name: row.get(3)?,
+            tag_color: row.get(4)?,
+            tagged_at: row.get(5)?,
         })
     };
 

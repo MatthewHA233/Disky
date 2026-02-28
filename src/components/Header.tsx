@@ -1,19 +1,20 @@
 import type { ScanSession } from "../hooks/useScanSession";
 import { formatSize } from "../lib/format";
-import { HardDrive, History, Trash2, Bot, Play, Tag } from "lucide-react";
+import { HardDrive, History, Trash2, Bot, Play, Tag, X } from "lucide-react";
 
 interface Props {
   scan: ScanSession;
   onHistory: () => void;
   onClean: () => void;
   cleanCount: number;
+  onClearSelected: () => void;
   onToggleChat: () => void;
   chatOpen: boolean;
   viewMode: "tree" | "tags";
   onToggleViewMode: () => void;
 }
 
-export function Header({ scan, onHistory, onClean, cleanCount, onToggleChat, chatOpen, viewMode, onToggleViewMode }: Props) {
+export function Header({ scan, onHistory, onClean, cleanCount, onClearSelected, onToggleChat, chatOpen, viewMode, onToggleViewMode }: Props) {
   const scanning = scan.status === "scanning";
   const canClean = scan.status === "done" && cleanCount > 0;
 
@@ -62,6 +63,21 @@ export function Header({ scan, onHistory, onClean, cleanCount, onToggleChat, cha
           )}
         </button>
       </div>
+
+      {/* Multi-select indicator pill */}
+      {cleanCount > 0 && (
+        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#C9A84C]/10 border border-[#C9A84C]/30 text-[#C9A84C] font-mono text-xs shrink-0">
+          <span className="font-semibold">{cleanCount}</span>
+          <span className="text-[#C9A84C]/70">项已选</span>
+          <button
+            className="ml-0.5 hover:text-[#FAF8F5] transition-colors"
+            onClick={onClearSelected}
+            title="取消全部选择"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       {/* Right: Action buttons */}
       <div className="flex items-center gap-1 shrink-0">

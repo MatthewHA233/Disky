@@ -141,6 +141,7 @@ export interface FileTag {
 export interface TaggedPath {
   path: string;
   name: string;
+  is_dir: boolean;
   tag_id: number;
   tag_name: string;
   tag_color: string;

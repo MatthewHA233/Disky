@@ -60,7 +60,7 @@ pub fn delete_items(app: tauri::AppHandle, paths: Vec<String>, to_trash: bool) -
     }).collect()
 }
 
-fn is_protected(p: &str) -> bool {
+pub(crate) fn is_protected(p: &str) -> bool {
     let norm = p.replace('/', "\\");
     // Check if path is a root-level system directory like C:\Windows
     for prot in PROTECTED {

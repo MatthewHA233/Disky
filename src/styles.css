@@ -91,6 +91,11 @@ body {
   animation: pulse-slow 2s ease-in-out infinite;
 }
 
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
 /* Keep structural classes intact for TreeMap SVG and DirectoryTree logic */
 .split-handle {
   flex-shrink: 0;

@@ -67,7 +67,7 @@ export function CleanupDialog({ selected, onDone, onClose }: Props) {
         <div className="px-8 py-6 border-b border-[#2A2A35] flex items-center justify-between bg-[#13131A]">
           <div className="flex items-center gap-3">
             <Trash2 className="w-5 h-5 text-[#E74C3C]" />
-            <h2 className="text-lg font-semibold text-[#FAF8F5]">STRUCTURAL ERADICATION</h2>
+            <h2 className="text-lg font-semibold text-[#FAF8F5]">清理删除</h2>
           </div>
           <button className="text-[#888899] hover:text-[#FAF8F5] transition-colors" onClick={closeDialog}>
             <XCircle className="w-6 h-6" />
@@ -76,16 +76,16 @@ export function CleanupDialog({ selected, onDone, onClose }: Props) {
 
         <div className="p-8 flex flex-col gap-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
           {paths.length === 0 ? (
-            <div className="text-[#888899] font-mono text-center py-8">No specific targets engaged.</div>
+            <div className="text-[#888899] font-mono text-center py-8">未选择任何项目</div>
           ) : (
             <>
               {step === "review" && (
                 <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-right-4 duration-300">
                   <div className="flex items-end justify-between border-b mx-2 pb-4 border-[#2A2A35]/50">
-                    <span className="text-[#888899] font-mono uppercase tracking-widest text-xs">Targets Acquired</span>
+                    <span className="text-[#888899] font-mono uppercase tracking-widest text-xs">已选目标</span>
                     <div className="text-right">
-                      <div className="text-2xl font-mono text-[#E74C3C]">{paths.length} <span className="text-sm text-[#FAF8F5]">ENTITIES</span></div>
-                      <div className="text-sm font-mono text-[#C9A84C]">{formatSize(totalSize)} ALLOCATED</div>
+                      <div className="text-2xl font-mono text-[#E74C3C]">{paths.length} <span className="text-sm text-[#FAF8F5]">个项目</span></div>
+                      <div className="text-sm font-mono text-[#C9A84C]">{formatSize(totalSize)} 占用</div>
                     </div>
                   </div>
 
@@ -106,15 +106,15 @@ export function CleanupDialog({ selected, onDone, onClose }: Props) {
                       onChange={(e) => setToTrash(e.target.checked)}
                     />
                     <div className="flex flex-col">
-                      <span className="text-sm font-medium text-[#FAF8F5] group-hover:text-[#C9A84C] transition-colors">Move to Recycle Bin</span>
-                      <span className="text-xs text-[#888899]">Recommended safety protocol. Uncheck for permanent deletion.</span>
+                      <span className="text-sm font-medium text-[#FAF8F5] group-hover:text-[#C9A84C] transition-colors">移至回收站</span>
+                      <span className="text-xs text-[#888899]">推荐。取消勾选将永久删除，无法恢复。</span>
                     </div>
                   </label>
 
                   <div className="flex justify-end gap-4 mt-2">
-                    <button className="magnetic-btn px-6 py-2 rounded-full border border-[#2A2A35] text-[#888899] hover:text-[#FAF8F5] hover:bg-[#2A2A35]/50" onClick={closeDialog}>CANCEL</button>
+                    <button className="magnetic-btn px-6 py-2 rounded-full border border-[#2A2A35] text-[#888899] hover:text-[#FAF8F5] hover:bg-[#2A2A35]/50" onClick={closeDialog}>取消</button>
                     <button className="magnetic-btn px-6 py-2 rounded-full bg-[#E74C3C] text-[#0D0D12] font-semibold flex items-center gap-2 hover:bg-[#c0392b]" onClick={() => setStep("confirm")}>
-                      PROCEED <ArrowRight className="w-4 h-4" />
+                      下一步 <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -125,20 +125,20 @@ export function CleanupDialog({ selected, onDone, onClose }: Props) {
                   <div className="w-16 h-16 rounded-full bg-[#E74C3C]/10 flex items-center justify-center mb-2">
                     <AlertTriangle className="w-8 h-8 text-[#E74C3C]" />
                   </div>
-                  <div className="text-xl font-medium text-[#FAF8F5]">Confirm Eradication</div>
+                  <div className="text-xl font-medium text-[#FAF8F5]">确认删除</div>
                   <div className="text-[#888899] text-sm max-w-md">
-                    You are about to eliminate {paths.length} entities freeing {formatSize(totalSize)} of space.
+                    即将删除 {paths.length} 个项目，释放 {formatSize(totalSize)} 空间。
                     <br /><br />
                     {toTrash ? (
-                      <span className="text-[#C9A84C]">Entities will be transferred to the Recycle Bin.</span>
+                      <span className="text-[#C9A84C]">文件将移至回收站，可恢复。</span>
                     ) : (
-                      <span className="text-[#E74C3C] font-semibold">Entities will be permanently purged from the physical drive. They cannot be recovered!</span>
+                      <span className="text-[#E74C3C] font-semibold">文件将被永久删除，无法恢复！</span>
                     )}
                   </div>
 
                   <div className="flex justify-center gap-4 mt-4 w-full">
-                    <button className="magnetic-btn flex-1 py-3 rounded-full border border-[#2A2A35] text-[#888899] hover:text-[#FAF8F5] hover:bg-[#2A2A35]/50" onClick={() => setStep("review")}>ABORT</button>
-                    <button className="magnetic-btn flex-1 py-3 rounded-full bg-[#E74C3C] text-[#0D0D12] font-bold hover:bg-[#c0392b] hover:shadow-[0_0_20px_rgba(231,76,60,0.4)] transition-all" onClick={handleDelete}>CONFIRM DELETION</button>
+                    <button className="magnetic-btn flex-1 py-3 rounded-full border border-[#2A2A35] text-[#888899] hover:text-[#FAF8F5] hover:bg-[#2A2A35]/50" onClick={() => setStep("review")}>返回</button>
+                    <button className="magnetic-btn flex-1 py-3 rounded-full bg-[#E74C3C] text-[#0D0D12] font-bold hover:bg-[#c0392b] hover:shadow-[0_0_20px_rgba(231,76,60,0.4)] transition-all" onClick={handleDelete}>确认删除</button>
                   </div>
                 </div>
               )}
@@ -148,10 +148,10 @@ export function CleanupDialog({ selected, onDone, onClose }: Props) {
                   <div className="flex items-center justify-between border-b pb-4 border-[#2A2A35]/50">
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="w-6 h-6 text-[#4CAF50]" />
-                      <span className="text-[#FAF8F5] font-semibold">OPERATION COMPLETE</span>
+                      <span className="text-[#FAF8F5] font-semibold">操作完成</span>
                     </div>
                     <div className="font-mono text-sm text-[#888899]">
-                      <span className="text-[#FAF8F5]">{results.filter((r) => r.success).length}</span> / {results.length} SUCCESS
+                      <span className="text-[#FAF8F5]">{results.filter((r) => r.success).length}</span> / {results.length} 成功
                     </div>
                   </div>
 
@@ -160,7 +160,7 @@ export function CleanupDialog({ selected, onDone, onClose }: Props) {
                       <div key={r.path} className="flex flex-col py-2 border-b border-[#2A2A35]/30 last:border-0 hover:bg-[#FFFFFF]/5 px-2 rounded -mx-2">
                         <div className="flex justify-between items-start">
                           <span className={r.success ? "text-[#888899] line-through" : "text-[#E74C3C]"}>{r.path}</span>
-                          <span className="shrink-0 ml-4 font-bold">{r.success ? <span className="text-[#4CAF50]">OK</span> : <span className="text-[#E74C3C]">FAIL</span>}</span>
+                          <span className="shrink-0 ml-4 font-bold">{r.success ? <span className="text-[#4CAF50]">成功</span> : <span className="text-[#E74C3C]">失败</span>}</span>
                         </div>
                         {r.error && <span className="text-[#E74C3C] mt-1 opacity-80">{r.error}</span>}
                       </div>
@@ -168,7 +168,7 @@ export function CleanupDialog({ selected, onDone, onClose }: Props) {
                   </div>
 
                   <div className="flex justify-end mt-2">
-                    <button className="magnetic-btn px-8 py-2 rounded-full bg-[#C9A84C] text-[#0D0D12] font-bold hover:bg-[#D4B55C]" onClick={finishDialog}>FINISH</button>
+                    <button className="magnetic-btn px-8 py-2 rounded-full bg-[#C9A84C] text-[#0D0D12] font-bold hover:bg-[#D4B55C]" onClick={finishDialog}>完成</button>
                   </div>
                 </div>
               )}
