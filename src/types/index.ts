@@ -42,6 +42,7 @@ export interface ScanRecord {
   entry_count: number;
   created_at: string;
   has_tree: boolean;
+  cleaned_bytes: number;
 }
 
 export interface LoadScanResult {
@@ -108,11 +109,33 @@ export interface AnalyzePathInput {
 
 export interface EmptyFolderResult {
   deleted: number;
+  bytes_freed: number;
   errors: string[];
 }
 
 export interface MoveResult {
   new_path: string;
+}
+
+export interface CleanupAction {
+  id: number;
+  path: string;
+  action_type: "delete" | "empty";
+  bytes_freed: number;
+  description: string;
+  created_at: string;
+}
+
+export interface CleanupSession {
+  session_ts: string;
+  drive: string;
+  total_freed: number;
+  actions: CleanupAction[];
+}
+
+export interface CleanupLogPage {
+  sessions: CleanupSession[];
+  total_sessions: number;
 }
 
 export interface ContextMenuTarget {

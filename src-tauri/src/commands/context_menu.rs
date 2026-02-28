@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tauri::State;
 
-use super::cleanup::is_protected;
+use super::cleanup::{is_protected, dir_size};
 use super::scan::{find_node, find_node_mut, normalize, ScanState};
 use crate::scanner::walk::{scan_tree, ScanProgress};
 use crate::scanner::DirEntry;
@@ -15,6 +15,7 @@ use crate::scanner::DirEntry;
 #[derive(Serialize)]
 pub struct EmptyFolderResult {
     deleted: u64,
+    bytes_freed: u64,
     errors: Vec<String>,
 }
 
@@ -139,6 +140,7 @@ pub fn empty_folder(path: String, to_trash: bool) -> Result<EmptyFolderResult, S
     }
 
     let mut deleted: u64 = 0;
+    let mut bytes_freed: u64 = 0;
     let mut errors = Vec::new();
 
     let entries = fs::read_dir(p).map_err(|e| format!("Cannot read directory: {e}"))?;
@@ -151,6 +153,11 @@ pub fn empty_folder(path: String, to_trash: bool) -> Result<EmptyFolderResult, S
             }
         };
         let entry_path = entry.path();
+        let entry_size = if entry_path.is_dir() {
+            dir_size(&entry_path)
+        } else {
+            entry.metadata().map(|m| m.len()).unwrap_or(0)
+        };
         let result = if to_trash {
             trash::delete(&entry_path).map_err(|e| e.to_string())
         } else if entry_path.is_dir() {
@@ -159,12 +166,15 @@ pub fn empty_folder(path: String, to_trash: bool) -> Result<EmptyFolderResult, S
             fs::remove_file(&entry_path).map_err(|e| e.to_string())
         };
         match result {
-            Ok(()) => deleted += 1,
+            Ok(()) => {
+                deleted += 1;
+                bytes_freed += entry_size;
+            }
             Err(e) => errors.push(format!("{}: {}", entry_path.display(), e)),
         }
     }
 
-    Ok(EmptyFolderResult { deleted, errors })
+    Ok(EmptyFolderResult { deleted, bytes_freed, errors })
 }
 
 // ---------------------------------------------------------------------------

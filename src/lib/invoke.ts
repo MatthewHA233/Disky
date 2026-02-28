@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath } from "../types";
+import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage } from "../types";
 
 export const listDrives = () => invoke<DriveInfo[]>("list_drives");
 
@@ -13,7 +13,8 @@ export const getItemsInfo = (paths: string[]) => invoke<ItemInfo[]>("get_items_i
 export const deleteItems = (paths: string[], toTrash: boolean) =>
   invoke<DeleteResult[]>("delete_items", { paths, toTrash });
 
-export const saveScan = (drive: string) => invoke<number>("save_scan", { drive });
+export const saveScan = (drive: string, cleanedBytes: number) =>
+  invoke<number>("save_scan", { drive, cleanedBytes });
 
 export const loadScan = (id: number) => invoke<LoadScanResult>("load_scan", { id });
 
@@ -23,6 +24,12 @@ export const listScans = () => invoke<ScanRecord[]>("list_scans");
 
 export const compareScans = (idA: number, idB: number, root: string) =>
   invoke<DiffEntry[]>("compare_scans", { idA, idB, root });
+
+// Cleanup logs
+export const saveCleanupLog = (drive: string, path: string, actionType: string, bytesFreed: number, sessionTs: string, description: string) =>
+  invoke<number>("save_cleanup_log", { drive, path, actionType, bytesFreed, sessionTs, description });
+export const listCleanupLogs = (page: number, pageSize: number) =>
+  invoke<CleanupLogPage>("list_cleanup_logs", { page, pageSize });
 
 // AI
 export const loadAiSettings = () => invoke<AiSettings>("load_ai_settings");

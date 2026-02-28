@@ -76,7 +76,7 @@ pub(crate) fn is_protected(p: &str) -> bool {
     false
 }
 
-fn dir_size(path: &Path) -> u64 {
+pub(crate) fn dir_size(path: &Path) -> u64 {
     fs::read_dir(path).map(|entries| {
         entries.filter_map(|e| e.ok()).map(|e| {
             let meta = e.metadata().ok();

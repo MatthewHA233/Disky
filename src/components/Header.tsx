@@ -4,6 +4,7 @@ import { HardDrive, History, Trash2, Bot, Play, Tag, X } from "lucide-react";
 
 interface Props {
   scan: ScanSession;
+  cleanedBytes?: number;
   onHistory: () => void;
   onClean: () => void;
   cleanCount: number;
@@ -14,7 +15,7 @@ interface Props {
   onToggleViewMode: () => void;
 }
 
-export function Header({ scan, onHistory, onClean, cleanCount, onClearSelected, onToggleChat, chatOpen, viewMode, onToggleViewMode }: Props) {
+export function Header({ scan, cleanedBytes = 0, onHistory, onClean, cleanCount, onClearSelected, onToggleChat, chatOpen, viewMode, onToggleViewMode }: Props) {
   const scanning = scan.status === "scanning";
   const canClean = scan.status === "done" && cleanCount > 0;
 
@@ -37,11 +38,15 @@ export function Header({ scan, onHistory, onClean, cleanCount, onClearSelected, 
             disabled={scanning}
           >
             <option value="">选择硬盘...</option>
-            {scan.drives.map((d) => (
-              <option key={d.mount_point} value={d.mount_point}>
-                {d.mount_point} ({formatSize(d.available_space)} 可用)
-              </option>
-            ))}
+            {scan.drives.map((d) => {
+              const isCurrent = d.mount_point === scan.selectedDrive;
+              const cleaned = isCurrent && cleanedBytes > 0 ? ` +${formatSize(cleanedBytes)}` : "";
+              return (
+                <option key={d.mount_point} value={d.mount_point}>
+                  {d.mount_point} ({formatSize(d.available_space)}{cleaned} 可用)
+                </option>
+              );
+            })}
           </select>
         </div>
 
@@ -82,8 +87,7 @@ export function Header({ scan, onHistory, onClean, cleanCount, onClearSelected, 
       {/* Right: Action buttons */}
       <div className="flex items-center gap-1 shrink-0">
         <button
-          className="p-1.5 text-[#888899] hover:text-[#FAF8F5] rounded-md hover:bg-[#1E1E28] transition-colors disabled:opacity-30 disabled:hover:text-[#888899] disabled:hover:bg-transparent"
-          disabled={!scan.rootPath}
+          className="p-1.5 text-[#888899] hover:text-[#FAF8F5] rounded-md hover:bg-[#1E1E28] transition-colors"
           onClick={onHistory}
           title="历史记录"
         >
@@ -91,8 +95,9 @@ export function Header({ scan, onHistory, onClean, cleanCount, onClearSelected, 
         </button>
 
         <button
-          className={`p-1.5 rounded-md transition-colors ${viewMode === 'tags' ? 'text-[#C9A84C] bg-[#1E1E28]' : 'text-[#888899] hover:text-[#C9A84C] hover:bg-[#1E1E28]'}`}
+          className={`p-1.5 rounded-md transition-colors disabled:opacity-30 disabled:hover:text-[#888899] disabled:hover:bg-transparent ${viewMode === 'tags' ? 'text-[#C9A84C] bg-[#1E1E28]' : 'text-[#888899] hover:text-[#C9A84C] hover:bg-[#1E1E28]'}`}
           onClick={onToggleViewMode}
+          disabled={scanning || !scan.rootPath}
           title="标签看板"
         >
           <Tag className="w-4.5 h-4.5" />

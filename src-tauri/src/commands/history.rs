@@ -17,6 +17,7 @@ pub struct ScanRecord {
     entry_count: i64,
     created_at: String,
     has_tree: bool,
+    cleaned_bytes: i64,
 }
 
 #[derive(Serialize)]
@@ -107,8 +108,25 @@ fn ensure_db(app: &tauri::AppHandle) -> Result<Connection, String> {
         );
         CREATE INDEX IF NOT EXISTS idx_entries_scan ON scan_entries(scan_id);"
     ).map_err(|e| e.to_string())?;
-    // New column for bincode file name (ignore error if column already exists)
+    // New columns (ignore error if column already exists)
     let _ = conn.execute_batch("ALTER TABLE scans ADD COLUMN tree_file TEXT DEFAULT ''");
+    let _ = conn.execute_batch("ALTER TABLE scans ADD COLUMN cleaned_bytes INTEGER DEFAULT 0");
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS cleanup_logs (
+            id INTEGER PRIMARY KEY,
+            drive TEXT NOT NULL,
+            path TEXT NOT NULL DEFAULT '',
+            action_type TEXT NOT NULL DEFAULT 'delete',
+            bytes_freed INTEGER NOT NULL,
+            session_ts TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );"
+    ).map_err(|e| e.to_string())?;
+    // Migration for existing cleanup_logs table
+    let _ = conn.execute_batch("ALTER TABLE cleanup_logs ADD COLUMN path TEXT NOT NULL DEFAULT ''");
+    let _ = conn.execute_batch("ALTER TABLE cleanup_logs ADD COLUMN action_type TEXT NOT NULL DEFAULT 'delete'");
+    let _ = conn.execute_batch("ALTER TABLE cleanup_logs ADD COLUMN session_ts TEXT NOT NULL DEFAULT ''");
+    let _ = conn.execute_batch("ALTER TABLE cleanup_logs ADD COLUMN description TEXT NOT NULL DEFAULT ''");
     Ok(conn)
 }
 
@@ -120,6 +138,7 @@ fn ensure_db(app: &tauri::AppHandle) -> Result<Connection, String> {
 pub async fn save_scan(
     app: tauri::AppHandle,
     drive: String,
+    cleaned_bytes: i64,
     scan_state: State<'_, ScanState>,
 ) -> Result<i64, String> {
     // Convert tree while holding the lock (pure CPU, fast)
@@ -138,8 +157,8 @@ pub async fn save_scan(
         let conn = ensure_db(&app)?;
 
         conn.execute(
-            "INSERT INTO scans (drive, entry_count, tree_file) VALUES (?1, ?2, '')",
-            params![drive, count],
+            "INSERT INTO scans (drive, entry_count, tree_file, cleaned_bytes) VALUES (?1, ?2, '', ?3)",
+            params![drive, count, cleaned_bytes],
         ).map_err(|e| e.to_string())?;
         let scan_id = conn.last_insert_rowid();
 
@@ -228,7 +247,7 @@ pub fn list_scans(app: tauri::AppHandle) -> Result<Vec<ScanRecord>, String> {
     let conn = ensure_db(&app)?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, drive, entry_count, created_at, COALESCE(tree_file, '')
+            "SELECT id, drive, entry_count, created_at, COALESCE(tree_file, ''), COALESCE(cleaned_bytes, 0)
              FROM scans ORDER BY id DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -242,6 +261,7 @@ pub fn list_scans(app: tauri::AppHandle) -> Result<Vec<ScanRecord>, String> {
                 entry_count: row.get(2)?,
                 created_at: row.get(3)?,
                 has_tree: !tf.is_empty(),
+                cleaned_bytes: row.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -363,4 +383,127 @@ fn compare_sql(conn: &Connection, id_a: i64, id_b: i64, norm: &str) -> Result<Ve
     }).map_err(|e| e.to_string())?;
 
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Cleanup Logs
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct CleanupAction {
+    id: i64,
+    path: String,
+    action_type: String,
+    bytes_freed: i64,
+    description: String,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct CleanupSession {
+    session_ts: String,
+    drive: String,
+    total_freed: i64,
+    actions: Vec<CleanupAction>,
+}
+
+#[derive(Serialize)]
+pub struct CleanupLogPage {
+    sessions: Vec<CleanupSession>,
+    total_sessions: i64,
+}
+
+#[tauri::command]
+pub fn save_cleanup_log(
+    app: tauri::AppHandle,
+    drive: String,
+    path: String,
+    action_type: String,
+    bytes_freed: i64,
+    session_ts: String,
+    description: String,
+) -> Result<i64, String> {
+    let conn = ensure_db(&app)?;
+    conn.execute(
+        "INSERT INTO cleanup_logs (drive, path, action_type, bytes_freed, session_ts, description) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![drive, path, action_type, bytes_freed, session_ts, description],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn list_cleanup_logs(
+    app: tauri::AppHandle,
+    page: i64,
+    page_size: i64,
+) -> Result<CleanupLogPage, String> {
+    let conn = ensure_db(&app)?;
+
+    // Count distinct sessions
+    let total_sessions: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT session_ts, drive FROM cleanup_logs WHERE session_ts != '')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // Get paginated session keys
+    let offset = (page - 1) * page_size;
+    let mut sess_stmt = conn
+        .prepare(
+            "SELECT session_ts, drive, SUM(bytes_freed) as total_freed
+             FROM cleanup_logs
+             WHERE session_ts != ''
+             GROUP BY session_ts, drive
+             ORDER BY MAX(created_at) DESC
+             LIMIT ?1 OFFSET ?2",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let session_keys: Vec<(String, String, i64)> = sess_stmt
+        .query_map(params![page_size, offset], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    // For each session, fetch its actions
+    let mut sessions = Vec::new();
+    let mut action_stmt = conn
+        .prepare(
+            "SELECT id, path, action_type, bytes_freed, COALESCE(description, ''), created_at
+             FROM cleanup_logs
+             WHERE session_ts = ?1 AND drive = ?2
+             ORDER BY id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    for (session_ts, drive, total_freed) in &session_keys {
+        let actions: Vec<CleanupAction> = action_stmt
+            .query_map(params![session_ts, drive], |row| {
+                Ok(CleanupAction {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    action_type: row.get(2)?,
+                    bytes_freed: row.get(3)?,
+                    description: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        sessions.push(CleanupSession {
+            session_ts: session_ts.clone(),
+            drive: drive.clone(),
+            total_freed: *total_freed,
+            actions,
+        });
+    }
+
+    Ok(CleanupLogPage { sessions, total_sessions })
 }

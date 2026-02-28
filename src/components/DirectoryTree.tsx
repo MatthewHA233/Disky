@@ -21,6 +21,7 @@ interface Props {
   onContextMenu?: (entry: DirEntry, x: number, y: number) => void;
   pathTags?: Map<string, FileTag[]>;
   onRemoveTag?: (path: string, tagId: number, isDir: boolean) => void;
+  onPathsLoaded?: (paths: string[]) => void;
   activePath?: string | null;
 }
 
@@ -30,13 +31,14 @@ interface TreeNode extends DirEntry {
   loaded?: boolean;
 }
 
-/** Ensure `target` node is expanded, loading children if needed */
-async function expandNode(list: TreeNode[], target: string): Promise<TreeNode[]> {
+/** Ensure `target` node is expanded, loading children if needed. Collects newly loaded paths into `loadedPaths`. */
+async function expandNode(list: TreeNode[], target: string, loadedPaths?: string[]): Promise<TreeNode[]> {
   const result: TreeNode[] = [];
   for (const node of list) {
     if (node.path === target) {
       if (!node.loaded && node.is_dir) {
         const kids = await getChildren(node.path, 200);
+        loadedPaths?.push(...kids.map((k) => k.path));
         result.push({
           ...node, expanded: true, loaded: true,
           children: kids.map((k) => ({ ...k, expanded: false, loaded: false })),
@@ -45,7 +47,7 @@ async function expandNode(list: TreeNode[], target: string): Promise<TreeNode[]>
         result.push({ ...node, expanded: true });
       }
     } else if (node.children) {
-      result.push({ ...node, children: await expandNode(node.children, target) });
+      result.push({ ...node, children: await expandNode(node.children, target, loadedPaths) });
     } else {
       result.push(node);
     }
@@ -53,11 +55,11 @@ async function expandNode(list: TreeNode[], target: string): Promise<TreeNode[]>
   return result;
 }
 
-/** Expand every path in navPath[1..n] into the node list */
-async function expandToNav(list: TreeNode[], navPath: string[]): Promise<TreeNode[]> {
+/** Expand every path in navPath[1..n] into the node list. Collects newly loaded paths into `loadedPaths`. */
+async function expandToNav(list: TreeNode[], navPath: string[], loadedPaths?: string[]): Promise<TreeNode[]> {
   let updated = list;
   for (let i = 1; i < navPath.length; i++) {
-    updated = await expandNode(updated, navPath[i]);
+    updated = await expandNode(updated, navPath[i], loadedPaths);
   }
   return updated;
 }
@@ -66,10 +68,11 @@ export function DirectoryTree({
   rootPath, liveChildren, scanning,
   onSelect, selected, analyses, onAnalyzeSelected, analyzing,
   navPath, onNavigate, onContextMenu,
-  pathTags, onRemoveTag, activePath,
+  pathTags, onRemoveTag, onPathsLoaded, activePath,
 }: Props) {
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
+  const [pendingRemoveTag, setPendingRemoveTag] = useState<{ path: string; tagId: number; isDir: boolean; tagName: string; tagColor: string } | null>(null);
   const selfNav = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -127,11 +130,13 @@ export function DirectoryTree({
       getChildren(rootPath, 200)
         .then(async (items) => {
           let initial: TreeNode[] = items.map((i) => ({ ...i, expanded: false, loaded: false }));
+          const allPaths = items.map((i) => i.path);
           const nav = navPathRef.current;
           if (nav.length > 1) {
-            initial = await expandToNav(initial, nav);
+            initial = await expandToNav(initial, nav, allPaths);
           }
           setNodes(initial);
+          if (allPaths.length > 0) onPathsLoaded?.(allPaths);
         })
         .finally(() => setLoading(false));
     } else {
@@ -141,12 +146,14 @@ export function DirectoryTree({
 
   // Toggle a node open/closed on user click
   const toggleNode = useCallback(async (path: string) => {
+    const newPaths: string[] = [];
     const toggle = async (list: TreeNode[]): Promise<TreeNode[]> => {
       const result: TreeNode[] = [];
       for (const node of list) {
         if (node.path === path) {
           if (!node.loaded && node.is_dir) {
             const kids = await getChildren(node.path, 200);
+            newPaths.push(...kids.map((k) => k.path));
             result.push({
               ...node, expanded: true, loaded: true,
               children: kids.map((k) => ({ ...k, expanded: false, loaded: false })),
@@ -163,7 +170,8 @@ export function DirectoryTree({
       return result;
     };
     setNodes(await toggle(nodes));
-  }, [nodes]);
+    if (newPaths.length > 0) onPathsLoaded?.(newPaths);
+  }, [nodes, onPathsLoaded]);
 
   const handleDirClick = (path: string) => {
     selfNav.current = true;
@@ -175,7 +183,11 @@ export function DirectoryTree({
   useEffect(() => {
     if (selfNav.current) { selfNav.current = false; return; }
     if (scanning || navPath.length <= 1 || nodes.length === 0) return;
-    expandToNav(nodes, navPath).then(setNodes);
+    const loadedPaths: string[] = [];
+    expandToNav(nodes, navPath, loadedPaths).then((updated) => {
+      setNodes(updated);
+      if (loadedPaths.length > 0) onPathsLoaded?.(loadedPaths);
+    });
   }, [navPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderRow = (item: DirEntry | TreeNode, depth: number, parentSize: number) => {
@@ -269,7 +281,7 @@ export function DirectoryTree({
                 {onRemoveTag && (
                   <button
                     className="opacity-0 group-hover/tag:opacity-100 hover:text-[#E74C3C] transition-opacity -mr-0.5"
-                    onClick={(e) => { e.stopPropagation(); onRemoveTag(item.path, ft.tag_id, item.is_dir); }}
+                    onClick={(e) => { e.stopPropagation(); setPendingRemoveTag({ path: item.path, tagId: ft.tag_id, isDir: item.is_dir, tagName: ft.tag_name, tagColor: ft.tag_color }); }}
                     title={`移除「${ft.tag_name}」`}
                   >
                     ×
@@ -336,7 +348,7 @@ export function DirectoryTree({
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#0D0D12] rounded-2xl border border-[#2A2A35] overflow-hidden shadow-2xl">
+    <div className="flex flex-col h-full bg-[#0D0D12] rounded-2xl border border-[#2A2A35] overflow-hidden shadow-2xl relative">
       <div className="flex items-center gap-1.5 px-1 py-2 bg-[#13131A] border-b border-[#2A2A35] shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-[#888899]">
         {onSelect && !scanning && <span className="w-4 shrink-0" />}
         <span className="w-4 shrink-0" />
@@ -364,6 +376,41 @@ export function DirectoryTree({
       <div ref={listRef} className="flex-1 overflow-y-auto py-2 custom-scrollbar">
         {displayItems.map((item) => renderRow(item, 0, totalSize))}
       </div>
+
+      {pendingRemoveTag && onRemoveTag && (
+        <div className="absolute inset-0 bg-[#0D0D12]/70 backdrop-blur-sm flex items-center justify-center z-10">
+          <div className="bg-[#13131A] border border-[#2A2A35] rounded-xl shadow-2xl p-5 min-w-[260px] max-w-[340px] font-mono text-xs">
+            <div className="text-[#FAF8F5] font-semibold mb-2">移除标签</div>
+            <div className="text-[#888899] mb-4 leading-relaxed">
+              确定要移除标签{" "}
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium"
+                style={{ backgroundColor: `${pendingRemoveTag.tagColor}25`, color: pendingRemoveTag.tagColor }}
+              >
+                {pendingRemoveTag.tagName}
+              </span>
+              {" "}吗？
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                className="px-3 py-1.5 rounded-lg bg-[#2A2A35] text-[#888899] hover:bg-[#333340] transition-colors"
+                onClick={() => setPendingRemoveTag(null)}
+              >
+                取消
+              </button>
+              <button
+                className="px-3 py-1.5 rounded-lg bg-[#E74C3C] text-white hover:bg-[#C0392B] transition-colors"
+                onClick={() => {
+                  onRemoveTag(pendingRemoveTag.path, pendingRemoveTag.tagId, pendingRemoveTag.isDir);
+                  setPendingRemoveTag(null);
+                }}
+              >
+                确认移除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

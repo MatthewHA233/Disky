@@ -19,6 +19,8 @@ pub fn run() {
             commands::history::delete_scan,
             commands::history::list_scans,
             commands::history::compare_scans,
+            commands::history::save_cleanup_log,
+            commands::history::list_cleanup_logs,
             commands::ai::load_ai_settings,
             commands::ai::save_ai_settings,
             commands::ai::send_chat_message,

@@ -9,11 +9,12 @@ interface Props {
   selected: Map<string, number>;
   onDone: () => void;
   onClose: () => void;
+  onCleanupDone: (bytes: number, path: string, action: "delete" | "empty") => void;
 }
 
 type Step = "review" | "confirm" | "done";
 
-export function CleanupDialog({ selected, onDone, onClose }: Props) {
+export function CleanupDialog({ selected, onDone, onClose, onCleanupDone }: Props) {
   const [step, setStep] = useState<Step>("review");
   const [toTrash, setToTrash] = useState(true);
   const [results, setResults] = useState<DeleteResult[]>([]);
@@ -54,6 +55,12 @@ export function CleanupDialog({ selected, onDone, onClose }: Props) {
   const handleDelete = async () => {
     const res = await deleteItems(paths, toTrash);
     setResults(res);
+    for (const r of res) {
+      if (r.success) {
+        const size = selected.get(r.path) ?? 0;
+        if (size > 0) onCleanupDone(size, r.path, "delete");
+      }
+    }
     setStep("done");
   };
 

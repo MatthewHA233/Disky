@@ -20,6 +20,7 @@ interface Props {
   y: number;
   onClose: () => void;
   onDataChanged: () => void;
+  onCleanupDone?: (bytes: number, path: string, action: "delete" | "empty") => void;
   tags?: Tag[];
   pathTags?: Map<string, FileTag[]>;
   onToggleTag?: (path: string, tagId: number, isDir: boolean) => Promise<boolean>;
@@ -39,7 +40,7 @@ interface MenuItem {
   action: () => void;
 }
 
-export function ContextMenu({ entry, x, y, onClose, onDataChanged, tags, pathTags, onToggleTag, onCreateTag, onDeleteTag }: Props) {
+export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone, tags, pathTags, onToggleTag, onCreateTag, onDeleteTag }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [confirm, setConfirm] = useState<ConfirmAction>(null);
   const [loading, setLoading] = useState(false);
@@ -109,6 +110,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, tags, pathTag
         case "empty-trash":
         case "empty-perm": {
           const r = await emptyFolder(entry.path, confirm === "empty-trash");
+          if (r.bytes_freed > 0 && onCleanupDone) onCleanupDone(r.bytes_freed, entry.path, "empty");
           if (r.errors.length > 0) {
             setResult(`已删除 ${r.deleted} 项，${r.errors.length} 项失败`);
             setLoading(false);
@@ -127,6 +129,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, tags, pathTag
             setLoading(false);
             return;
           }
+          if (onCleanupDone) onCleanupDone(entry.logical_size, entry.path, "delete");
           await doRefreshAndClose();
           return;
         }

@@ -26,6 +26,7 @@ interface Props {
   onDeleteTag: (id: number) => void;
   onRefresh: () => void;
   onDataChanged: () => void;
+  onCleanupDone?: (bytes: number, path: string, action: "delete" | "empty") => void;
 }
 
 export function TagBoard({
@@ -39,6 +40,7 @@ export function TagBoard({
   onDeleteTag,
   onRefresh,
   onDataChanged,
+  onCleanupDone,
 }: Props) {
   const [managing, setManaging] = useState(false);
   const [newName, setNewName] = useState("");
@@ -98,6 +100,7 @@ export function TagBoard({
     setEmptyResult(null);
     try {
       const result = await emptyFolder(emptyTarget.path, toTrash);
+      if (result.bytes_freed > 0 && onCleanupDone) onCleanupDone(result.bytes_freed, emptyTarget.path, "empty");
       if (result.errors.length > 0) {
         setEmptyResult(`已删除 ${result.deleted} 项，${result.errors.length} 项失败`);
         setEmptyLoading(false);
@@ -125,9 +128,11 @@ export function TagBoard({
   const columns = useMemo(() =>
     tags.map((tag) => ({
       tag,
-      items: taggedPaths.filter((tp) => tp.tag_id === tag.id),
+      items: taggedPaths
+        .filter((tp) => tp.tag_id === tag.id)
+        .sort((a, b) => (sizeMap.get(b.path) ?? 0) - (sizeMap.get(a.path) ?? 0)),
     })),
-    [tags, taggedPaths]
+    [tags, taggedPaths, sizeMap]
   );
 
   return (

@@ -15,7 +15,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { AiSettingsDialog } from "./components/AiSettingsDialog";
 import { AnalyzeConfirmDialog } from "./components/AnalyzeConfirmDialog";
 import { ContextMenu } from "./components/ContextMenu";
-import { getChildren, getItemsInfo } from "./lib/invoke";
+import { getChildren, getItemsInfo, saveCleanupLog } from "./lib/invoke";
 import { useMemo } from "react";
 import type { AiAnalysis, AnalyzePathInput, ContextMenuTarget } from "./types";
 
@@ -55,6 +55,18 @@ export default function App() {
   // Confirm dialog state
   const [confirmDuplicates, setConfirmDuplicates] = useState<AiAnalysis[] | null>(null);
   const [pendingItems, setPendingItems] = useState<AnalyzePathInput[]>([]);
+
+  const [cleanedBytes, setCleanedBytes] = useState(0);
+  const [scanSessionTs, setScanSessionTs] = useState(() => new Date().toISOString());
+
+  const handleCleanupDone = useCallback((bytes: number, path: string, action: "delete" | "empty") => {
+    setCleanedBytes((prev) => prev + bytes);
+    const drive = scan.selectedDrive ?? scan.rootPath ?? "";
+    if (drive) {
+      const desc = aiAnalysis.analyses.get(path)?.description ?? "";
+      saveCleanupLog(drive, path, action, bytes, scanSessionTs, desc).catch(() => {});
+    }
+  }, [scan.selectedDrive, scan.rootPath, scanSessionTs, aiAnalysis.analyses]);
 
   const scanning = scan.status === "scanning";
 
@@ -144,9 +156,14 @@ export default function App() {
     }
   }, [scan.liveChildren]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear selections only when a new scan starts
+  // Clear selections, reset cleanedBytes, start new session, and exit tags view when a new scan starts
   useEffect(() => {
-    if (scanning) setSelected(new Map());
+    if (scanning) {
+      setSelected(new Map());
+      setCleanedBytes(0);
+      setScanSessionTs(new Date().toISOString());
+      setViewMode("tree");
+    }
   }, [scanning]);
 
   const toggleSelect = (path: string, size: number) => {
@@ -234,6 +251,7 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 h-full relative">
         <Header
           scan={scan}
+          cleanedBytes={cleanedBytes}
           onHistory={() => setDialog("history")}
           onClean={() => setDialog("cleanup")}
           cleanCount={selected.size}
@@ -276,6 +294,7 @@ export default function App() {
                   }}
                   onRefresh={() => tagSystem.loadTaggedPaths()}
                   onDataChanged={handleDataChanged}
+                  onCleanupDone={handleCleanupDone}
                   key={`tags-${refreshKey}`}
                 />
               ) : (
@@ -293,6 +312,7 @@ export default function App() {
                   onContextMenu={handleContextMenu}
                   pathTags={tagSystem.pathTags}
                   onRemoveTag={(path, tagId, isDir) => tagSystem.toggleTag(path, tagId, isDir)}
+                  onPathsLoaded={(paths) => tagSystem.loadTagsForPaths(paths)}
                   activePath={activePath}
                   key={`tree-${refreshKey}`}
                 />
@@ -337,16 +357,12 @@ export default function App() {
           selected={selected}
           onDone={() => { setSelected(new Map()); setDialog(null); }}
           onClose={() => setDialog(null)}
+          onCleanupDone={handleCleanupDone}
         />
       )}
       {dialog === "history" && (
         <HistoryDialog
-          drive={scan.rootPath}
           onClose={() => setDialog(null)}
-          onLoad={(rootPath, children) => {
-            scan.loadFromHistory(rootPath, children);
-            setDialog(null);
-          }}
         />
       )}
       {dialog === "ai-settings" && (
@@ -366,6 +382,7 @@ export default function App() {
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           onDataChanged={handleDataChanged}
+          onCleanupDone={handleCleanupDone}
           tags={tagSystem.tags}
           pathTags={tagSystem.pathTags}
           onToggleTag={tagSystem.toggleTag}
