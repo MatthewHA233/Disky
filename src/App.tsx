@@ -15,7 +15,10 @@ import { ChatPanel } from "./components/ChatPanel";
 import { AiSettingsDialog } from "./components/AiSettingsDialog";
 import { AnalyzeConfirmDialog } from "./components/AnalyzeConfirmDialog";
 import { ContextMenu } from "./components/ContextMenu";
-import { getChildren, getItemsInfo, saveCleanupLog } from "./lib/invoke";
+import { AnalyzeStreamViewer } from "./components/AnalyzeStreamViewer";
+import { ScanProgressBar } from "./components/ScanProgressBar";
+import { getChildren, getItemsInfo, saveCleanupLog, removeScanNode } from "./lib/invoke";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useMemo } from "react";
 import type { AiAnalysis, AnalyzePathInput, ContextMenuTarget } from "./types";
 
@@ -48,6 +51,7 @@ export default function App() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [selected, setSelected] = useState<Map<string, number>>(new Map());
   const [chatOpen, setChatOpen] = useState(false);
+  const [analyzeLogOpen, setAnalyzeLogOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuTarget | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
@@ -59,16 +63,50 @@ export default function App() {
   const [cleanedBytes, setCleanedBytes] = useState(0);
   const [scanSessionTs, setScanSessionTs] = useState(() => new Date().toISOString());
 
+  // AI 提交的清理计划（聊天里用户同意后 agent 写入 requests/，这里弹确认窗）
+  const [aiCleanup, setAiCleanup] = useState<Map<string, number> | null>(null);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let disposed = false;
+    listen<{ items: { path: string; reason: string }[] }>("agent-cleanup-request", async (e) => {
+      const paths = e.payload.items.map((i) => i.path);
+      if (paths.length === 0) return;
+      try {
+        const infos = await getItemsInfo(paths);
+        const map = new Map(infos.map((i) => [i.path, i.size]));
+        if (map.size > 0) setAiCleanup(map);
+      } catch { /* 路径已不存在等情况直接忽略 */ }
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const handleCleanupDone = useCallback((bytes: number, path: string, action: "delete" | "empty") => {
     setCleanedBytes((prev) => prev + bytes);
+    scan.refreshDrives();
     const drive = scan.selectedDrive ?? scan.rootPath ?? "";
     if (drive) {
       const desc = aiAnalysis.analyses.get(path)?.description ?? "";
       saveCleanupLog(drive, path, action, bytes, scanSessionTs, desc).catch(() => {});
     }
-  }, [scan.selectedDrive, scan.rootPath, scanSessionTs, aiAnalysis.analyses]);
+  }, [scan.selectedDrive, scan.rootPath, scan.refreshDrives, scanSessionTs, aiAnalysis.analyses]);
 
   const scanning = scan.status === "scanning";
+
+  const scanPct = useMemo(() => {
+    if (!scanning || !scan.progress) return 0;
+    const drive = scan.drives.find(d =>
+      d.mount_point.replace(/\\$/, "") === scan.selectedDrive?.replace(/\\$/, "")
+    );
+    const usedSpace = drive ? drive.total_space - drive.available_space : 0;
+    return usedSpace > 0 ? Math.min(99, (scan.progress.total_size / usedSpace) * 100) : 0;
+  }, [scanning, scan.progress, scan.drives, scan.selectedDrive]);
 
   // Suppress the webview's native context menu globally
   useEffect(() => {
@@ -132,6 +170,47 @@ export default function App() {
     else setNavPath([]);
   }, [scan.rootPath]);
 
+  // AI 回复中的路径点击 → 左侧目录树/TreeMap 跳转（构造完整面包屑栈）
+  const navigateToPath = useCallback(
+    (target: string) => {
+      if (!scan.rootPath) return;
+      // 文件路径跳到所在目录
+      const looksLikeFile = /\.[A-Za-z0-9]{1,6}$/.test(target);
+      let t = (looksLikeFile ? target.slice(0, target.lastIndexOf("\\")) : target).replace(/\\+$/, "");
+      const root = scan.rootPath.replace(/\\+$/, "");
+      if (!t || t.toLowerCase() === root.toLowerCase()) {
+        setNavPath([scan.rootPath]);
+        return;
+      }
+      if (!(t.toLowerCase() + "\\").startsWith(root.toLowerCase() + "\\")) return;
+      const rel = t.slice(root.length).replace(/^\\/, "");
+      const stack = [scan.rootPath];
+      let cur = root;
+      for (const seg of rel.split("\\")) {
+        if (!seg) continue;
+        cur = cur + "\\" + seg;
+        stack.push(cur);
+      }
+      setNavPath(stack);
+    },
+    [scan.rootPath]
+  );
+
+  // Keep watcher in sync with current nav path
+  useEffect(() => {
+    const current = navPath[navPath.length - 1];
+    if (current && scan.status === "done") {
+      scan.setNavPath(current);
+    }
+  }, [navPath, scan.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When watcher detects a live update, force DirectoryTree/TreeMap to re-fetch
+  useEffect(() => {
+    if (scan.liveUpdateTick > 0) {
+      setRefreshKey((k) => k + 1);
+    }
+  }, [scan.liveUpdateTick]);
+
   const handleNavigate = useCallback((path: string) => {
     setNavPath(prev => {
       const idx = prev.indexOf(path);
@@ -146,7 +225,8 @@ export default function App() {
 
   const handleDataChanged = useCallback(() => {
     setRefreshKey(k => k + 1);
-  }, []);
+    scan.refreshDrives();
+  }, [scan.refreshDrives]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load tags for visible paths when liveChildren change
   useEffect(() => {
@@ -176,6 +256,7 @@ export default function App() {
   const runAnalysis = useCallback(
     async (items: AnalyzePathInput[]) => {
       if (items.length === 0) return;
+      setAnalyzeLogOpen(true);
       await aiAnalysis.analyzeItems(items);
     },
     [aiAnalysis],
@@ -246,7 +327,7 @@ export default function App() {
   );
 
   return (
-    <div className="flex h-screen w-full bg-[#0D0D12] overflow-hidden text-[#FAF8F5] relative">
+    <div className="flex h-screen w-full bg-fiber overflow-hidden text-textMain relative">
       {/* Sidebar / Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative">
         <Header
@@ -260,7 +341,12 @@ export default function App() {
           chatOpen={chatOpen}
           viewMode={viewMode}
           onToggleViewMode={() => setViewMode((v) => (v === "tree" ? "tags" : "tree"))}
+          analyzing={aiAnalysis.analyzing}
+          analyzeLogOpen={analyzeLogOpen}
+          onToggleAnalyzeLog={() => setAnalyzeLogOpen((v) => !v)}
         />
+
+        <ScanProgressBar pct={scanPct} visible={scanning} />
 
         {/* Main SplitPane Container */}
         <div className="flex-1 flex flex-col min-h-0 relative px-4 pb-0">
@@ -338,7 +424,7 @@ export default function App() {
         <StatusBar scan={scan} />
 
         {aiAnalysis.error && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 bg-[#E74C3C]/90 text-[#FAF8F5] px-6 py-2 rounded-full shadow-lg font-mono text-sm border border-[#E74C3C]">
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 bg-danger/90 text-textMain px-6 py-2 rounded-full shadow-lg font-mono text-sm border border-[#E74C3C]">
             {aiAnalysis.error}
           </div>
         )}
@@ -348,6 +434,7 @@ export default function App() {
         <ChatPanel
           chat={chat}
           onOpenSettings={() => setDialog("ai-settings")}
+          onNavigatePath={navigateToPath}
         />
       )}
 
@@ -358,6 +445,18 @@ export default function App() {
           onDone={() => { setSelected(new Map()); setDialog(null); }}
           onClose={() => setDialog(null)}
           onCleanupDone={handleCleanupDone}
+        />
+      )}
+      {aiCleanup && (
+        <CleanupDialog
+          selected={aiCleanup}
+          onDone={() => { setAiCleanup(null); handleDataChanged(); }}
+          onClose={() => setAiCleanup(null)}
+          onCleanupDone={(bytes, path, action) => {
+            handleCleanupDone(bytes, path, action);
+            // 从内存树摘除已删节点，界面即时一致
+            removeScanNode(path).catch(() => {});
+          }}
         />
       )}
       {dialog === "history" && (
@@ -388,6 +487,13 @@ export default function App() {
           onToggleTag={tagSystem.toggleTag}
           onCreateTag={tagSystem.createTag}
           onDeleteTag={tagSystem.deleteTag}
+        />
+      )}
+      {analyzeLogOpen && (
+        <AnalyzeStreamViewer
+          log={aiAnalysis.streamLog}
+          analyzing={aiAnalysis.analyzing}
+          onClose={() => setAnalyzeLogOpen(false)}
         />
       )}
     </div>
