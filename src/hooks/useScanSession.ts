@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DirEntry, DriveInfo, ScanProgressEvent, ScanTreeEvent } from "../types";
-import { listDrives, scanDisk } from "../lib/invoke";
+import { listDrives, scanDisk, startWatch, stopWatch, setWatchPath } from "../lib/invoke";
 
 export type ScanStatus = "idle" | "scanning" | "done" | "error";
 
@@ -26,6 +26,9 @@ export interface ScanSession {
   errorMsg: string;
   startScan: () => void;
   loadFromHistory: (rootPath: string, children: DirEntry[]) => void;
+  refreshDrives: () => void;
+  setNavPath: (path: string) => void;
+  liveUpdateTick: number;
 }
 
 export function useScanSession(): ScanSession {
@@ -37,24 +40,33 @@ export function useScanSession(): ScanSession {
   const [currentDir, setCurrentDir] = useState("");
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [liveUpdateTick, setLiveUpdateTick] = useState(0);
 
   const unlistenProgressRef = useRef<UnlistenFn | null>(null);
   const unlistenTreeRef = useRef<UnlistenFn | null>(null);
+  const unlistenLiveRef = useRef<UnlistenFn | null>(null);
   const skipResetRef = useRef(false);
 
   // Per-drive state cache
   const cacheRef = useRef<Map<string, DriveSnapshot>>(new Map());
   const prevDriveRef = useRef<string | null>(null);
 
+  const refreshDrives = useCallback(() => {
+    listDrives().then(setDrives).catch(() => {});
+  }, []);
+
   useEffect(() => {
-    listDrives()
-      .then(setDrives)
-      .catch((e) => setErrorMsg(String(e)));
+    refreshDrives();
+    // Refresh when window regains focus (user may have deleted files externally)
+    window.addEventListener("focus", refreshDrives);
     return () => {
+      window.removeEventListener("focus", refreshDrives);
       unlistenProgressRef.current?.();
       unlistenTreeRef.current?.();
+      unlistenLiveRef.current?.();
+      stopWatch().catch(() => {});
     };
-  }, []);
+  }, [refreshDrives]);
 
   // Wrap setSelectedDrive to save/restore cache
   const setSelectedDrive = useCallback((drive: string | null) => {
@@ -144,6 +156,15 @@ export function useScanSession(): ScanSession {
       const newRootPath = selectedDrive.replace(/\\$/, "");
       setStatus("done");
       setRootPath(newRootPath);
+      refreshDrives();
+
+      // Start fs watcher and listen for live updates
+      unlistenLiveRef.current?.();
+      unlistenLiveRef.current = await listen<DirEntry[]>("live-update", (event) => {
+        setLiveChildren(event.payload);
+        setLiveUpdateTick((t) => t + 1);
+      });
+      startWatch(newRootPath).catch(() => {});
       setCurrentDir("");
 
       // Update cache immediately after scan completes
@@ -165,6 +186,10 @@ export function useScanSession(): ScanSession {
       unlistenTreeRef.current = null;
     }
   }, [selectedDrive, status]);
+
+  const setNavPath = useCallback((path: string) => {
+    setWatchPath(path).catch(() => {});
+  }, []);
 
   const loadFromHistory = useCallback((root: string, children: DirEntry[]) => {
     // Find the matching drive in the dropdown list
@@ -194,5 +219,8 @@ export function useScanSession(): ScanSession {
     errorMsg,
     startScan,
     loadFromHistory,
+    refreshDrives,
+    setNavPath,
+    liveUpdateTick,
   };
 }

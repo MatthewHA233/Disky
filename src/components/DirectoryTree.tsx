@@ -208,17 +208,17 @@ export function DirectoryTree({
           else rowRefs.current.delete(item.path);
         }}
         className={cn(
-          hasExpandedChildren && "rounded-xl ring-1 ring-[#C9A84C]/25 bg-[#C9A84C]/[0.04] my-0.5"
+          hasExpandedChildren && "rounded-xl ring-1 ring-[#FF6D00]/25 bg-photon/[0.04] my-0.5"
         )}
       >
         <div
           className={cn(
             "tree-row-anim group flex items-center gap-1.5 px-1 py-0.5 cursor-pointer border-l-2 transition-all hover:bg-[#FFFFFF]/5",
             isActive
-              ? "border-[#C9A84C] bg-[#C9A84C]/10 text-[#FAF8F5]"
+              ? "border-photon bg-photon/10 text-textMain"
               : isSelected
-                ? "border-[#C9A84C] bg-[#C9A84C]/5"
-                : "border-transparent text-[#888899]",
+                ? "border-photon bg-photon/5"
+                : "border-transparent text-text-dim",
             !isActive && hasAnalysis && !isSelected && "border-[#7B61FF]/30"
           )}
           style={{ paddingLeft: `${depth * 1.25 + 0.25}rem` }}
@@ -234,11 +234,15 @@ export function DirectoryTree({
             <div
               className={cn(
                 "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
-                isSelected ? "bg-[#C9A84C] border-[#C9A84C]" : "border-[#2A2A35] group-hover:border-[#C9A84C]"
+                isSelected ? "bg-photon border-photon" : "border-slate group-hover:border-photon"
               )}
               onClick={(e) => { e.stopPropagation(); onSelect(item.path, item.logical_size); }}
             >
-              {isSelected && <div className="w-2 h-2 bg-[#0D0D12] rounded-sm" />}
+              {isSelected && (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <polyline points="1.5,5 4,7.5 8.5,2" stroke="#ffffff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
             </div>
           )}
 
@@ -246,11 +250,11 @@ export function DirectoryTree({
             {item.is_dir ? (
               scanning ? (
                 isScanning
-                  ? <Loader2 className="w-3 h-3 animate-spin text-[#C9A84C]" />
+                  ? <Loader2 className="w-3 h-3 animate-spin text-photon" />
                   : <ChevronRight className="w-3.5 h-3.5" />
               ) : (
                 isTreeNode && node.expanded
-                  ? <ChevronDown className="w-3.5 h-3.5 text-[#C9A84C]" />
+                  ? <ChevronDown className="w-3.5 h-3.5 text-photon" />
                   : <ChevronRight className="w-3.5 h-3.5" />
               )
             ) : (
@@ -260,14 +264,14 @@ export function DirectoryTree({
 
           <div className="flex items-center gap-1.5 w-[15%] min-w-0 shrink-0">
             {item.is_dir ? (
-              <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", isTreeNode && node.expanded ? "text-[#C9A84C]" : "text-[#C9A84C]/70")} />
+              <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", isTreeNode && node.expanded ? "text-photon" : "text-photon/70")} />
             ) : (
-              <File className="w-3.5 h-3.5 shrink-0 text-[#EAE6DF]/70" />
+              <File className="w-3.5 h-3.5 shrink-0 text-border/70" />
             )}
             <span className={cn(
-              "break-all font-medium transition-colors group-hover:text-[#FAF8F5] text-[11px] leading-snug",
-              isActive ? "text-[#FAF8F5] font-semibold" : item.is_dir ? "text-[#C9A84C]" : "text-[#EAE6DF]",
-              isSelected && !isActive && "text-[#C9A84C] font-semibold"
+              "break-all font-medium transition-colors group-hover:text-textMain text-[11px] leading-snug",
+              isActive ? "text-textMain font-semibold" : item.is_dir ? "text-photon" : "text-border",
+              isSelected && !isActive && "text-photon font-semibold"
             )}>
               {item.name}
             </span>
@@ -280,7 +284,7 @@ export function DirectoryTree({
                 {ft.tag_name}
                 {onRemoveTag && (
                   <button
-                    className="opacity-0 group-hover/tag:opacity-100 hover:text-[#E74C3C] transition-opacity -mr-0.5"
+                    className="opacity-0 group-hover/tag:opacity-100 hover:text-danger transition-opacity -mr-0.5"
                     onClick={(e) => { e.stopPropagation(); setPendingRemoveTag({ path: item.path, tagId: ft.tag_id, isDir: item.is_dir, tagName: ft.tag_name, tagColor: ft.tag_color }); }}
                     title={`移除「${ft.tag_name}」`}
                   >
@@ -293,21 +297,21 @@ export function DirectoryTree({
 
           <span className="w-16 text-right shrink-0 font-mono text-[10px]">
             {isScanning ? (
-              <span className="text-[#C9A84C] animate-pulse">扫描中...</span>
+              <span className="text-photon animate-pulse">扫描中...</span>
             ) : (
-              <span className="text-[#FAF8F5]">{formatSize(item.logical_size)}</span>
+              <span className="text-textMain">{formatSize(item.logical_size)}</span>
             )}
           </span>
 
-          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-[#888899]">
+          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
             {!isScanning && item.is_dir ? formatNumber(item.files) : "-"}
           </span>
 
-          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-[#888899]">
+          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
             {!isScanning && item.is_dir ? formatNumber(item.subdirs) : "-"}
           </span>
 
-          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-[#888899]">
+          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
             {!isScanning && `${pct.toFixed(1)}%`}
           </span>
 
@@ -317,7 +321,7 @@ export function DirectoryTree({
             )}
           </span>
 
-          <span className="flex-1 min-w-0 text-xs text-[#888899] group-hover:text-[#FAF8F5] transition-colors whitespace-pre-wrap break-words leading-snug">
+          <span className="flex-1 min-w-0 text-xs text-text-dim group-hover:text-textMain transition-colors whitespace-pre-wrap break-words leading-snug">
             {analyses?.get(item.path)?.description ?? ""}
           </span>
         </div>
@@ -333,7 +337,7 @@ export function DirectoryTree({
 
   if (!scanning && loading) {
     return (
-      <div className="h-full flex items-center justify-center text-[#C9A84C] font-mono text-sm gap-2 uppercase tracking-widest">
+      <div className="h-full flex items-center justify-center text-photon font-mono text-sm gap-2 uppercase tracking-widest">
         <Loader2 className="w-4 h-4 animate-spin" /> 加载中...
       </div>
     );
@@ -341,15 +345,15 @@ export function DirectoryTree({
 
   if (!scanning && !rootPath) {
     return (
-      <div className="h-full flex items-center justify-center text-[#888899] font-mono text-sm uppercase tracking-widest">
+      <div className="h-full flex items-center justify-center text-text-dim font-mono text-sm uppercase tracking-widest">
         选择硬盘并开始扫描
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#0D0D12] rounded-2xl border border-[#2A2A35] overflow-hidden shadow-2xl relative">
-      <div className="flex items-center gap-1.5 px-1 py-2 bg-[#13131A] border-b border-[#2A2A35] shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-[#888899]">
+    <div className="flex flex-col h-full bg-fiber rounded-2xl border border-slate overflow-hidden shadow-2xl relative">
+      <div className="flex items-center gap-1.5 px-1 py-2 bg-abyss border-b border-slate shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-text-dim">
         {onSelect && !scanning && <span className="w-4 shrink-0" />}
         <span className="w-4 shrink-0" />
         <span className="w-[15%] min-w-0 shrink-0">名称</span>
@@ -378,10 +382,10 @@ export function DirectoryTree({
       </div>
 
       {pendingRemoveTag && onRemoveTag && (
-        <div className="absolute inset-0 bg-[#0D0D12]/70 backdrop-blur-sm flex items-center justify-center z-10">
-          <div className="bg-[#13131A] border border-[#2A2A35] rounded-xl shadow-2xl p-5 min-w-[260px] max-w-[340px] font-mono text-xs">
-            <div className="text-[#FAF8F5] font-semibold mb-2">移除标签</div>
-            <div className="text-[#888899] mb-4 leading-relaxed">
+        <div className="absolute inset-0 bg-fiber/70 backdrop-blur-sm flex items-center justify-center z-10">
+          <div className="bg-abyss border border-slate rounded-xl shadow-2xl p-5 min-w-[260px] max-w-[340px] font-mono text-xs">
+            <div className="text-textMain font-semibold mb-2">移除标签</div>
+            <div className="text-text-dim mb-4 leading-relaxed">
               确定要移除标签{" "}
               <span
                 className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium"
@@ -393,7 +397,7 @@ export function DirectoryTree({
             </div>
             <div className="flex gap-2 justify-end">
               <button
-                className="px-3 py-1.5 rounded-lg bg-[#2A2A35] text-[#888899] hover:bg-[#333340] transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-slate text-text-dim hover:bg-[#333340] transition-colors"
                 onClick={() => setPendingRemoveTag(null)}
               >
                 取消

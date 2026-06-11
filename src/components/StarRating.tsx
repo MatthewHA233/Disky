@@ -13,22 +13,22 @@ export function StarRating({ priority, maxStars = 5 }: Props) {
     if (priority >= i) {
       // Full star
       stars.push(
-        <Star key={i} className="w-3.5 h-3.5 fill-[#C9A84C] text-[#C9A84C]" />
+        <Star key={i} className="w-3.5 h-3.5 fill-photon text-photon" />
       );
     } else if (priority >= i - 0.5) {
       // Half star
       stars.push(
         <div key={i} className="relative w-3.5 h-3.5">
-          <Star className="absolute inset-0 w-3.5 h-3.5 text-[#2A2A35]" />
+          <Star className="absolute inset-0 w-3.5 h-3.5 text-slate" />
           <div className="absolute inset-0 overflow-hidden w-[50%]">
-            <Star className="w-3.5 h-3.5 fill-[#C9A84C] text-[#C9A84C]" />
+            <Star className="w-3.5 h-3.5 fill-photon text-photon" />
           </div>
         </div>
       );
     } else {
       // Empty star
       stars.push(
-        <Star key={i} className="w-3.5 h-3.5 text-[#2A2A35]" />
+        <Star key={i} className="w-3.5 h-3.5 text-slate" />
       );
     }
   }

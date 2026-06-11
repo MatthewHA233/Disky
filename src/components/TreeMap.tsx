@@ -162,16 +162,16 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
       // Directories: deep obsidian -> slate -> champagne hover
       // Files: champagne -> muted -> white hover
       ctx.fillStyle = r.entry.is_dir
-        ? (isHover ? "#C9A84C" : "#2A2A35")
-        : (isHover ? "#FAF8F5" : "#EAE6DF");
+        ? (isHover ? "#FF6D00" : "#1A1A24")
+        : (isHover ? "#EEEEF0" : "#EAE6DF");
 
       // Inner shadow/border effect simulating gap
       ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
 
       // Text styling
       const textColor = r.entry.is_dir
-        ? (isHover ? "#0D0D12" : "#FAF8F5")
-        : (isHover ? "#0D0D12" : "#0D0D12");
+        ? (isHover ? "#08080F" : "#EEEEF0")
+        : (isHover ? "#08080F" : "#08080F");
 
       if (r.w > 40 && r.h > 20) {
         ctx.fillStyle = textColor;
@@ -212,16 +212,16 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0D0D12] overflow-hidden" ref={bgRef}>
+    <div className="flex flex-col h-full bg-fiber overflow-hidden" ref={bgRef}>
       {!scanning && navPath.length > 0 && (
-        <div className="flex items-center gap-2 px-6 py-3 border-b border-[#2A2A35] shrink-0 font-mono text-xs overflow-x-auto custom-scrollbar">
+        <div className="flex items-center gap-2 px-6 py-3 border-b border-slate shrink-0 font-mono text-xs overflow-x-auto custom-scrollbar">
           {navPath.map((p, i) => (
             <div key={p} className="flex items-center gap-2 shrink-0">
               {i > 0 && <ChevronRight className="w-3 h-3 text-[#555]" />}
               <span
                 className={cn(
-                  "cursor-pointer transition-colors px-2 py-1 rounded hover:bg-[#2A2A35]",
-                  i === navPath.length - 1 ? "text-[#C9A84C] bg-[#C9A84C]/10" : "text-[#888899]"
+                  "cursor-pointer transition-colors px-2 py-1 rounded hover:bg-slate",
+                  i === navPath.length - 1 ? "text-photon bg-photon/10" : "text-text-dim"
                 )}
                 onClick={() => goBack(i)}
               >
@@ -232,7 +232,7 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
           <div className="flex-1 min-w-[20px]" />
           {onAnalyzePath && currentPath && (
             <button
-              className="magnetic-btn shrink-0 flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#13131A] border border-[#C9A84C] text-[#C9A84C] hover:bg-[#C9A84C] hover:text-[#0D0D12] transition-colors"
+              className="magnetic-btn shrink-0 flex items-center gap-2 px-4 py-1.5 rounded-full bg-abyss border border-photon text-photon hover:bg-photon hover:text-fiber transition-colors"
               disabled={analyzing}
               onClick={() => onAnalyzePath(currentPath)}
             >
@@ -243,8 +243,8 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
         </div>
       )}
 
-      <div className="flex-1 min-h-0 relative p-0 border border-[#2A2A35] rounded-b-2xl" ref={wrapperRef}>
-        <div className="absolute inset-0 overflow-hidden bg-[#13131A]">
+      <div className="flex-1 min-h-0 relative p-0 border border-slate rounded-b-2xl" ref={wrapperRef}>
+        <div className="absolute inset-0 overflow-hidden bg-abyss">
           <canvas
             ref={canvasRef}
             style={{ width: size.w, height: size.h, cursor: scanning ? "default" : "crosshair", display: "block" }}
@@ -267,21 +267,21 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
       {hover && (() => {
         const ai = analyses?.get(hover.entry.path);
         return (
-          <div className="fixed bottom-12 left-8 bg-[#13131A]/90 backdrop-blur-xl border border-[#2A2A35] rounded-xl p-4 shadow-2xl pointer-events-none z-50 animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div className="fixed bottom-12 left-8 bg-abyss/90 backdrop-blur-xl border border-slate rounded-xl p-4 shadow-2xl pointer-events-none z-50 animate-in fade-in slide-in-from-bottom-4 duration-200">
             <div className="flex items-start justify-between gap-6 mb-2">
-              <span className="font-semibold text-[#FAF8F5] max-w-xs break-all">{hover.entry.name}</span>
-              <span className="font-mono text-[#C9A84C]">{formatSize(hover.entry.logical_size)}</span>
+              <span className="font-semibold text-textMain max-w-xs break-all">{hover.entry.name}</span>
+              <span className="font-mono text-photon">{formatSize(hover.entry.logical_size)}</span>
             </div>
             {hover.entry.is_dir && (
-              <div className="font-mono text-xs text-[#888899] mb-3 flex gap-4">
+              <div className="font-mono text-xs text-text-dim mb-3 flex gap-4">
                 <span>{formatNumber(hover.entry.subdirs)} 目录</span>
                 <span>{formatNumber(hover.entry.files)} 文件</span>
               </div>
             )}
             {ai && (
-              <div className="pt-3 border-t border-[#2A2A35] flex items-center gap-3">
+              <div className="pt-3 border-t border-slate flex items-center gap-3">
                 <StarRating priority={ai.priority} />
-                <span className="text-xs text-[#EAE6DF] max-w-xs">{ai.description}</span>
+                <span className="text-xs text-border max-w-xs">{ai.description}</span>
               </div>
             )}
           </div>

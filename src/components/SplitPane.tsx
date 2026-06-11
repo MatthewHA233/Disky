@@ -46,7 +46,7 @@ export function SplitPane({ top, bottom, initialRatio = 0.5 }: Props) {
         {top}
       </div>
       <div
-        className="flex-shrink-0 h-1.5 cursor-row-resize bg-[#0D0D12] border-y border-[#2A2A35] hover:bg-[#2A2A35] transition-colors z-20"
+        className="flex-shrink-0 h-1.5 cursor-row-resize bg-fiber border-y border-slate hover:bg-slate transition-colors z-20"
         onMouseDown={onMouseDown}
       />
       <div className="relative overflow-hidden min-h-0" style={{ flex: 1 }}>
