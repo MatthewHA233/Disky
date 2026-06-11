@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage } from "../types";
+import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, ChatSession, CliDetection, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage } from "../types";
 
 export const listDrives = () => invoke<DriveInfo[]>("list_drives");
 
@@ -35,10 +35,21 @@ export const listCleanupLogs = (page: number, pageSize: number) =>
 export const loadAiSettings = () => invoke<AiSettings>("load_ai_settings");
 export const saveAiSettings = (settings: AiSettings) =>
   invoke<void>("save_ai_settings", { settings });
-export const sendChatMessage = (message: string) =>
-  invoke<void>("send_chat_message", { message });
-export const listChatMessages = () => invoke<ChatMessage[]>("list_chat_messages");
-export const clearChatHistory = () => invoke<void>("clear_chat_history");
+export const sendChatMessage = (message: string, sessionId: number) =>
+  invoke<void>("send_chat_message", { message, sessionId });
+export const listChatMessages = (sessionId: number) =>
+  invoke<ChatMessage[]>("list_chat_messages", { sessionId });
+export const detectClaudeCli = () => invoke<CliDetection>("detect_claude_cli");
+
+// Chat sessions
+export const listChatSessions = () => invoke<ChatSession[]>("list_chat_sessions");
+export const createChatSession = () => invoke<ChatSession>("create_chat_session");
+export const renameChatSession = (sessionId: number, title: string) =>
+  invoke<void>("rename_chat_session", { sessionId, title });
+export const deleteChatSession = (sessionId: number) =>
+  invoke<void>("delete_chat_session", { sessionId });
+export const regenerateChatTitle = (sessionId: number) =>
+  invoke<void>("regenerate_chat_title", { sessionId });
 
 // AI Analysis
 export const analyzePaths = (items: AnalyzePathInput[]) =>
@@ -72,6 +83,8 @@ export const pickFolderAndMove = (path: string) =>
   invoke<MoveResult>("pick_folder_and_move", { path });
 export const refreshScanNode = (path: string) =>
   invoke<DirEntry[]>("refresh_scan_node", { path });
+export const removeScanNode = (path: string) =>
+  invoke<void>("remove_scan_node", { path });
 
 // Tags
 export const listTags = () => invoke<Tag[]>("list_tags");
@@ -86,3 +99,8 @@ export const getTagsForPaths = (paths: string[]) =>
   invoke<FileTag[]>("get_tags_for_paths", { paths });
 export const listTaggedPaths = (tagId?: number) =>
   invoke<TaggedPath[]>("list_tagged_paths", { tagId: tagId ?? null });
+
+// File system watcher
+export const startWatch = (root: string) => invoke<void>("start_watch", { root });
+export const stopWatch = () => invoke<void>("stop_watch");
+export const setWatchPath = (path: string) => invoke<void>("set_watch_path", { path });

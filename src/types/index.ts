@@ -70,6 +70,10 @@ export interface AiSettings {
   base_url: string;
   model_id: string;
   url_mode: string; // "append" | "raw"
+  api_type: string; // "anthropic" | "openai"
+  provider: string; // "api" | "claude-code"
+  cli_model: string; // "default" | "sonnet" | "opus" | "haiku" | 自定义
+  proxy_url: string; // 网络代理，如 http://127.0.0.1:7890；空 = 不使用
 }
 
 export interface ChatMessage {
@@ -77,11 +81,38 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  meta?: string | null; // JSON 序列化的 ChatSegment[]（Claude Code provider）
+}
+
+export interface ChatSession {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ChatStreamEvent {
   delta: string;
   done: boolean;
+  error: string | null;
+  // Claude Code provider 扩展字段
+  kind?: "text" | "thinking" | "tool_use" | "tool_result" | "status";
+  status?: string;
+  tool_id?: string;
+  tool_name?: string;
+  tool_input?: string;
+  tool_result?: string;
+  tool_error?: boolean;
+}
+
+export type ChatSegment =
+  | { type: "thinking"; text: string }
+  | { type: "tool"; id: string; name: string; input: string; result?: string | null; is_error: boolean };
+
+export interface CliDetection {
+  available: boolean;
+  path: string | null;
+  version: string | null;
   error: string | null;
 }
 

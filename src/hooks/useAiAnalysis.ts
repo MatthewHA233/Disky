@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { AiAnalysis, AnalyzePathInput } from "../types";
 import { analyzePaths, saveAiAnalysis, loadAllAiAnalyses } from "../lib/invoke";
 
@@ -6,6 +7,8 @@ export interface UseAiAnalysisReturn {
   analyses: Map<string, AiAnalysis>;
   analyzing: boolean;
   error: string | null;
+  streamLog: string;
+  clearStreamLog: () => void;
   analyzeItems: (items: AnalyzePathInput[]) => Promise<void>;
   getAnalysis: (path: string) => AiAnalysis | undefined;
 }
@@ -14,6 +17,8 @@ export function useAiAnalysis(): UseAiAnalysisReturn {
   const [analyses, setAnalyses] = useState<Map<string, AiAnalysis>>(new Map());
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [streamLog, setStreamLog] = useState("");
+  const unlistenRef = useRef<(() => void) | null>(null);
 
   // Load all analyses on mount
   useEffect(() => {
@@ -28,57 +33,75 @@ export function useAiAnalysis(): UseAiAnalysisReturn {
       .catch(() => {});
   }, []);
 
+  // Listen to analyze-stream events from Rust
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<{ delta: string; done: boolean; error: string | null }>("analyze-stream", (event) => {
+      const { delta } = event.payload;
+      if (delta) {
+        setStreamLog((prev) => prev + delta);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+      unlistenRef.current = fn;
+    });
+    return () => { unlisten?.(); };
+  }, []);
+
+  const clearStreamLog = useCallback(() => setStreamLog(""), []);
+
   const analyzeItems = useCallback(async (items: AnalyzePathInput[]) => {
     if (items.length === 0) return;
     setAnalyzing(true);
     setError(null);
+    setStreamLog("");
 
-    let remaining = [...items];
-    const maxRetries = 10;
-    let retryCount = 0;
+    const BATCH_SIZE = 5;
+    const CONCURRENCY = 3;
+
+    // Split into batches of BATCH_SIZE
+    const batches: AnalyzePathInput[][] = [];
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      batches.push(items.slice(i, i + BATCH_SIZE));
+    }
+
+    const errors: string[] = [];
+    let failedCount = 0;
+
+    // Merge new results into existing analyses map and persist
+    const applyResults = async (results: { path: string; description: string; priority: number }[]) => {
+      if (results.length === 0) return;
+      await Promise.all(results.map((r) => saveAiAnalysis(r.path, r.description, r.priority)));
+      setAnalyses((prev) => {
+        const next = new Map(prev);
+        const now = new Date().toLocaleString();
+        for (const r of results) {
+          next.set(r.path, { path: r.path, description: r.description, priority: r.priority, created_at: now });
+        }
+        return next;
+      });
+    };
 
     try {
-      while (remaining.length > 0 && retryCount < maxRetries) {
-        const results = await analyzePaths(remaining);
-
-        // 逐个保存已返回的结果
-        for (const r of results) {
-          await saveAiAnalysis(r.path, r.description, r.priority);
+      // Process batches in groups of CONCURRENCY so UI updates progressively
+      for (let i = 0; i < batches.length; i += CONCURRENCY) {
+        const group = batches.slice(i, i + CONCURRENCY);
+        const settled = await Promise.allSettled(group.map((batch) => analyzePaths(batch)));
+        for (const result of settled) {
+          if (result.status === "fulfilled") {
+            await applyResults(result.value);
+          } else {
+            errors.push(String(result.reason));
+            failedCount += group[settled.indexOf(result)]?.length ?? 0;
+          }
         }
-
-        // 刷新缓存（让 UI 立即看到已分析的结果）
-        const all = await loadAllAiAnalyses();
-        const map = new Map<string, AiAnalysis>();
-        for (const item of all) {
-          map.set(item.path, item);
-        }
-        setAnalyses(map);
-
-        // 计算剩余未分析的项目
-        const resultPaths = new Set(results.map((r) => r.path));
-        remaining = remaining.filter((item) => !resultPaths.has(item.path));
-
-        // 如果本轮没有任何进展，停止重试
-        if (results.length === 0) break;
-
-        retryCount++;
       }
 
-      if (remaining.length > 0) {
-        setError(`${remaining.length} 个项目未能分析完成`);
+      if (failedCount > 0) {
+        setError(`${failedCount} 个项目分析失败：${errors[0]}`);
       }
     } catch (e) {
-      // 网络错误等致命错误，停止重试
       setError(e instanceof Error ? e.message : String(e));
-      // 即使出错也刷新一次缓存，展示已保存的结果
-      try {
-        const all = await loadAllAiAnalyses();
-        const map = new Map<string, AiAnalysis>();
-        for (const item of all) {
-          map.set(item.path, item);
-        }
-        setAnalyses(map);
-      } catch {}
     } finally {
       setAnalyzing(false);
     }
@@ -89,5 +112,5 @@ export function useAiAnalysis(): UseAiAnalysisReturn {
     [analyses],
   );
 
-  return { analyses, analyzing, error, analyzeItems, getAnalysis };
+  return { analyses, analyzing, error, streamLog, clearStreamLog, analyzeItems, getAnalysis };
 }

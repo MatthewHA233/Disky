@@ -81,63 +81,63 @@ export function AnalyzeConfirmDialog({ duplicates, onConfirm, onClose }: Props) 
   };
 
   return (
-    <div className="fixed inset-0 bg-[#0D0D12]/80 backdrop-blur-md flex flex-col items-center justify-center z-[100]" onClick={closeDialog}>
+    <div className="fixed inset-0 bg-fiber/80 backdrop-blur-md flex flex-col items-center justify-center z-[100]" onClick={closeDialog}>
       <div
         ref={dialogRef}
         className="glass-panel w-full max-w-lg rounded-[2rem] overflow-hidden flex flex-col shadow-[0_20px_60px_-15px_rgba(0,0,0,0.8)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-8 py-6 border-b border-[#2A2A35] flex items-center justify-between bg-[#13131A]">
+        <div className="px-8 py-6 border-b border-slate flex items-center justify-between bg-abyss">
           <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-[#C9A84C]" />
-            <h2 className="text-lg font-semibold text-[#FAF8F5]">已有分析结果</h2>
+            <AlertCircle className="w-5 h-5 text-photon" />
+            <h2 className="text-lg font-semibold text-textMain">已有分析结果</h2>
           </div>
-          <button className="text-[#888899] hover:text-[#FAF8F5] transition-colors" onClick={closeDialog}>
+          <button className="text-text-dim hover:text-textMain transition-colors" onClick={closeDialog}>
             <XCircle className="w-6 h-6" />
           </button>
         </div>
 
         <div className="p-8 flex flex-col gap-6">
-          <div className="flex items-center justify-between text-xs font-mono text-[#888899] uppercase tracking-widest border-b border-[#2A2A35]/50 pb-2">
+          <div className="flex items-center justify-between text-xs font-mono text-text-dim uppercase tracking-widest border-b border-slate/50 pb-2">
             <span>冲突确认</span>
-            <span className="text-[#C9A84C] font-bold text-sm">{currentIndex + 1} / {duplicates.length}</span>
+            <span className="text-photon font-bold text-sm">{currentIndex + 1} / {duplicates.length}</span>
           </div>
 
           <div className="flex flex-col gap-2">
-            <div className="flex flex-col p-4 bg-[#0A0A12] border border-[#2A2A35] rounded-xl relative overflow-hidden group">
-              <FileType className="absolute -right-4 -top-4 w-24 h-24 text-[#C9A84C] opacity-5 group-hover:opacity-10 transition-opacity" />
-              <div className="text-xs font-mono text-[#888899] mb-1">目标路径</div>
-              <div className="text-sm font-mono text-[#C9A84C] break-all">{current.path}</div>
+            <div className="flex flex-col p-4 bg-[#0A0A12] border border-slate rounded-xl relative overflow-hidden group">
+              <FileType className="absolute -right-4 -top-4 w-24 h-24 text-photon opacity-5 group-hover:opacity-10 transition-opacity" />
+              <div className="text-xs font-mono text-text-dim mb-1">目标路径</div>
+              <div className="text-sm font-mono text-photon break-all">{current.path}</div>
 
-              <div className="mt-4 pt-4 border-t border-[#2A2A35]/50">
-                <div className="text-xs font-mono text-[#888899] mb-2 uppercase">当前描述</div>
-                <div className="text-sm text-[#FAF8F5] mb-4">{current.description}</div>
+              <div className="mt-4 pt-4 border-t border-slate/50">
+                <div className="text-xs font-mono text-text-dim mb-2 uppercase">当前描述</div>
+                <div className="text-sm text-textMain mb-4">{current.description}</div>
 
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-mono text-[#888899] uppercase">当前优先级</div>
+                  <div className="text-xs font-mono text-text-dim uppercase">当前优先级</div>
                   <div className="flex items-center gap-2">
                     <StarRating priority={current.priority} />
-                    <span className="font-mono text-[#C9A84C] font-bold">{current.priority.toFixed(1)}</span>
+                    <span className="font-mono text-photon font-bold">{current.priority.toFixed(1)}</span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="text-center text-sm font-medium text-[#FAF8F5] mt-2">
+          <div className="text-center text-sm font-medium text-textMain mt-2">
             是否覆盖已有的分析结果？
           </div>
 
-          <div className="flex flex-col gap-3 mt-4 pt-6 border-t border-[#2A2A35]/50">
+          <div className="flex flex-col gap-3 mt-4 pt-6 border-t border-slate/50">
             <div className="flex justify-between gap-4">
               <button
-                className="magnetic-btn flex-1 py-3 bg-[#13131A] border border-[#2A2A35] text-[#888899] hover:text-[#FAF8F5] hover:border-[#888899] rounded-xl font-medium transition-colors"
+                className="magnetic-btn flex-1 py-3 bg-abyss border border-slate text-text-dim hover:text-textMain hover:border-[var(--text-dim)] rounded-xl font-medium transition-colors"
                 onClick={() => advance(false)}
               >
                 跳过
               </button>
               <button
-                className="magnetic-btn flex-1 py-3 bg-[#C9A84C] text-[#0D0D12] rounded-xl font-bold hover:bg-[#D4B55C] flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(201,168,76,0.3)] transition-all"
+                className="magnetic-btn flex-1 py-3 bg-photon text-fiber rounded-xl font-bold hover:bg-[#D4B55C] flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(201,168,76,0.3)] transition-all"
                 onClick={() => advance(true)}
               >
                 覆盖 <CheckCircle2 className="w-4 h-4" />
@@ -147,13 +147,13 @@ export function AnalyzeConfirmDialog({ duplicates, onConfirm, onClose }: Props) 
             {remaining > 1 && (
               <div className="flex justify-between gap-4 mt-2">
                 <button
-                  className="magnetic-btn text-xs font-mono text-[#888899] hover:text-[#FAF8F5] transition-colors py-2 flex items-center gap-1 justify-center flex-1"
+                  className="magnetic-btn text-xs font-mono text-text-dim hover:text-textMain transition-colors py-2 flex items-center gap-1 justify-center flex-1"
                   onClick={handleSkipAll}
                 >
                   <FastForward className="w-3 h-3" /> 全部跳过 ({remaining})
                 </button>
                 <button
-                  className="magnetic-btn text-xs font-mono text-[#C9A84C] hover:text-[#D4B55C] border border-[#C9A84C]/30 hover:bg-[#C9A84C]/10 transition-colors py-2 rounded-lg flex items-center gap-1 justify-center flex-1"
+                  className="magnetic-btn text-xs font-mono text-photon hover:text-[#D4B55C] border border-photon/30 hover:bg-photon/10 transition-colors py-2 rounded-lg flex items-center gap-1 justify-center flex-1"
                   onClick={handleReplaceAll}
                 >
                   <CheckCircle2 className="w-3 h-3" /> 全部覆盖 ({remaining})
