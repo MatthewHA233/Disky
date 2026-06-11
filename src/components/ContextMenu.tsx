@@ -9,7 +9,7 @@ import type { DirEntry, Tag, FileTag } from "../types";
 import {
   openPath, showInExplorer, openInTerminal,
   showProperties, emptyFolder, pickFolderAndMove,
-  refreshScanNode, deleteItems,
+  refreshScanNode, removeScanNode, deleteItems,
 } from "../lib/invoke";
 import { cn } from "../lib/utils";
 import { TagPicker } from "./TagPicker";
@@ -87,15 +87,24 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
     };
   }, [onClose]);
 
-  const parentPath = entry.path.replace(/\//g, "\\").replace(/\\[^\\]+$/, "");
-
-  const doRefreshAndClose = useCallback(async () => {
+  // 删除/移走：从内存树手术式摘除节点（祖先大小自动回减），不重扫。
+  // 之前刷新父目录的做法对根级条目意味着整盘重扫（分钟级"卡死"）。
+  const removeNodeAndClose = useCallback(async () => {
     try {
-      await refreshScanNode(parentPath);
-    } catch { /* parent may not exist in tree if root-level */ }
+      await removeScanNode(entry.path);
+    } catch { /* 节点不在树中（如已被刷新移除）时忽略 */ }
     onDataChanged();
     onClose();
-  }, [parentPath, onDataChanged, onClose]);
+  }, [entry.path, onDataChanged, onClose]);
+
+  // 清空文件夹：重扫该文件夹自身（清空后近乎瞬时），差量会传播给祖先
+  const refreshSelfAndClose = useCallback(async () => {
+    try {
+      await refreshScanNode(entry.path);
+    } catch { /* ignore */ }
+    onDataChanged();
+    onClose();
+  }, [entry.path, onDataChanged, onClose]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(entry.path);
@@ -114,10 +123,10 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
           if (r.errors.length > 0) {
             setResult(`已删除 ${r.deleted} 项，${r.errors.length} 项失败`);
             setLoading(false);
-            setTimeout(doRefreshAndClose, 1200);
+            setTimeout(refreshSelfAndClose, 1200);
             return;
           }
-          await doRefreshAndClose();
+          await refreshSelfAndClose();
           return;
         }
         case "delete-trash":
@@ -130,13 +139,13 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
             return;
           }
           if (onCleanupDone) onCleanupDone(entry.logical_size, entry.path, "delete");
-          await doRefreshAndClose();
+          await removeNodeAndClose();
           return;
         }
         case "move": {
           try {
             await pickFolderAndMove(entry.path);
-            await doRefreshAndClose();
+            await removeNodeAndClose();
           } catch (e) {
             const msg = String(e);
             if (msg.includes("cancelled")) {
@@ -153,7 +162,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
       setResult(String(e));
       setLoading(false);
     }
-  }, [confirm, entry.path, doRefreshAndClose]);
+  }, [confirm, entry.path, entry.logical_size, onCleanupDone, removeNodeAndClose, refreshSelfAndClose]);
 
   const runAction = useCallback(async (fn: () => Promise<unknown>) => {
     try {
@@ -259,7 +268,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
     return (
       <div
         ref={menuRef}
-        className="fixed z-[9999] bg-[#13131A] border border-[#2A2A35] rounded-xl shadow-2xl font-mono text-xs"
+        className="fixed z-[9999] bg-abyss border border-slate rounded-xl shadow-2xl font-mono text-xs"
         style={{ left: pos.x, top: pos.y }}
       >
         <TagPicker
@@ -288,17 +297,17 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
     return (
       <div
         ref={menuRef}
-        className="fixed z-[9999] bg-[#13131A] border border-[#2A2A35] rounded-xl shadow-2xl p-4 min-w-[260px] font-mono text-xs"
+        className="fixed z-[9999] bg-abyss border border-slate rounded-xl shadow-2xl p-4 min-w-[260px] font-mono text-xs"
         style={{ left: pos.x, top: pos.y }}
       >
-        <div className="text-[#FAF8F5] font-semibold mb-1">{cfg.title}</div>
-        <div className="text-[#888899] mb-3 leading-relaxed">{cfg.desc}</div>
+        <div className="text-textMain font-semibold mb-1">{cfg.title}</div>
+        <div className="text-text-dim mb-3 leading-relaxed">{cfg.desc}</div>
         {result && (
-          <div className="text-[#E74C3C] mb-2 text-[11px]">{result}</div>
+          <div className="text-danger mb-2 text-[11px]">{result}</div>
         )}
         <div className="flex gap-2">
           <button
-            className="px-3 py-1.5 rounded-lg bg-[#2A2A35] text-[#888899] hover:bg-[#333340] transition-colors"
+            className="px-3 py-1.5 rounded-lg bg-slate text-text-dim hover:bg-[#333340] transition-colors"
             disabled={loading}
             onClick={() => { setConfirm(null); setResult(null); }}
           >
@@ -306,7 +315,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
           </button>
           {confirm === "empty-trash" && (
             <button
-              className="px-3 py-1.5 rounded-lg bg-[#E74C3C]/20 text-[#E74C3C] border border-[#E74C3C]/30 hover:bg-[#E74C3C]/30 transition-colors"
+              className="px-3 py-1.5 rounded-lg bg-danger/20 text-danger border border-danger/30 hover:bg-danger/30 transition-colors"
               disabled={loading}
               onClick={() => setConfirm("empty-perm")}
             >
@@ -318,7 +327,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
               "px-3 py-1.5 rounded-lg transition-colors flex-1",
               cfg.danger
                 ? "bg-[#E74C3C] text-white hover:bg-[#C0392B]"
-                : "bg-[#C9A84C] text-[#0D0D12] hover:bg-[#B89A3E]"
+                : "bg-photon text-fiber hover:bg-[#B89A3E]"
             )}
             disabled={loading}
             onClick={handleConfirmAction}
@@ -333,13 +342,13 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
   return (
     <div
       ref={menuRef}
-      className="fixed z-[9999] bg-[#13131A] border border-[#2A2A35] rounded-xl shadow-2xl py-1.5 min-w-[240px] font-mono text-xs"
+      className="fixed z-[9999] bg-abyss border border-slate rounded-xl shadow-2xl py-1.5 min-w-[240px] font-mono text-xs"
       style={{ left: pos.x, top: pos.y }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {groups.map((group, gi) => (
         <div key={gi}>
-          {gi > 0 && <div className="my-1 border-t border-[#2A2A35]" />}
+          {gi > 0 && <div className="my-1 border-t border-slate" />}
           {group.map((item) => {
             if (item === "sep") return null;
             const mi = item as MenuItem;
@@ -351,8 +360,8 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
                   mi.disabled
                     ? "text-[#555] cursor-not-allowed"
                     : mi.danger
-                      ? "text-[#E74C3C] hover:bg-[#E74C3C]/10"
-                      : "text-[#EAE6DF] hover:bg-[#FFFFFF]/5"
+                      ? "text-danger hover:bg-danger/10"
+                      : "text-border hover:bg-[#FFFFFF]/5"
                 )}
                 disabled={mi.disabled}
                 onClick={() => !mi.disabled && mi.action()}
@@ -368,7 +377,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
         </div>
       ))}
       {result && (
-        <div className="mx-3 my-1.5 p-2 rounded-lg bg-[#E74C3C]/10 text-[#E74C3C] text-[10px] break-all">
+        <div className="mx-3 my-1.5 p-2 rounded-lg bg-danger/10 text-danger text-[10px] break-all">
           {result}
         </div>
       )}

@@ -266,6 +266,34 @@ fn count_nodes(node: &TreeNode) -> u64 {
     1 + node.children.iter().map(count_nodes).sum::<u64>()
 }
 
+/// 对 target 的所有真祖先节点（不含 target 自身）应用大小/计数增量。
+/// 用于删除/清空/刷新节点后让上层目录的统计立即一致，免去整盘重扫。
+pub(crate) fn adjust_ancestors(
+    node: &mut TreeNode,
+    target: &str,
+    delta_size: i64,
+    delta_files: i64,
+    delta_dirs: i64,
+) {
+    if node.path.eq_ignore_ascii_case(target) {
+        return;
+    }
+    let is_prefix = target.len() > node.path.len()
+        && target.as_bytes().get(node.path.len()) == Some(&b'\\')
+        && target
+            .get(..node.path.len())
+            .map_or(false, |p| p.eq_ignore_ascii_case(&node.path));
+    if !is_prefix {
+        return;
+    }
+    node.logical_size = (node.logical_size as i64 + delta_size).max(0) as u64;
+    node.files = (node.files as i64 + delta_files).max(0) as u64;
+    node.subdirs = (node.subdirs as i64 + delta_dirs).max(0) as u64;
+    for child in &mut node.children {
+        adjust_ancestors(child, target, delta_size, delta_files, delta_dirs);
+    }
+}
+
 pub(crate) fn normalize(p: &str) -> String {
     p.replace('/', "\\").trim_end_matches('\\').to_string()
 }

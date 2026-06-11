@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use super::cleanup::{is_protected, dir_size};
-use super::scan::{find_node, find_node_mut, normalize, ScanState};
+use super::scan::{adjust_ancestors, find_node, find_node_mut, normalize, ScanState};
 use crate::scanner::walk::{scan_tree, ScanProgress};
 use crate::scanner::DirEntry;
 
@@ -128,7 +128,14 @@ pub fn show_properties(path: String) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn empty_folder(path: String, to_trash: bool) -> Result<EmptyFolderResult, String> {
+pub async fn empty_folder(path: String, to_trash: bool) -> Result<EmptyFolderResult, String> {
+    // 重 IO（递归算大小 + 回收站 COM），必须离开主线程，否则整个 UI 冻结
+    tokio::task::spawn_blocking(move || empty_folder_blocking(&path, to_trash))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn empty_folder_blocking(path: &str, to_trash: bool) -> Result<EmptyFolderResult, String> {
     let norm = path.replace('/', "\\");
     let p = Path::new(&norm);
 
@@ -182,7 +189,14 @@ pub fn empty_folder(path: String, to_trash: bool) -> Result<EmptyFolderResult, S
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn pick_folder_and_move(path: String) -> Result<MoveResult, String> {
+pub async fn pick_folder_and_move(path: String) -> Result<MoveResult, String> {
+    // PowerShell 选择框 + 跨盘移动都是阻塞操作，放主线程会把整个窗口挂住
+    tokio::task::spawn_blocking(move || pick_folder_and_move_blocking(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn pick_folder_and_move_blocking(path: &str) -> Result<MoveResult, String> {
     let norm = path.replace('/', "\\");
     if is_protected(&norm) {
         return Err("Protected system path".into());
@@ -283,13 +297,59 @@ pub async fn refresh_scan_node(
     let tree = guard.as_mut().ok_or("No scan data")?;
     let node = find_node_mut(tree, &norm).ok_or("Path not found after rescan")?;
 
+    // 记录差量，刷新后同步传播给所有祖先目录（否则上层大小停留在旧值）
+    let delta_size = scanned.logical_size as i64 - node.logical_size as i64;
+    let delta_files = scanned.files as i64 - node.files as i64;
+    let delta_dirs = scanned.subdirs as i64 - node.subdirs as i64;
+
     node.children = scanned.children;
     node.logical_size = scanned.logical_size;
     node.files = scanned.files;
     node.subdirs = scanned.subdirs;
 
+    adjust_ancestors(tree, &norm, delta_size, delta_files, delta_dirs);
+
     // Return updated children
+    let tree_ref = guard.as_ref().ok_or("No scan data")?;
+    let node = find_node(tree_ref, &norm).ok_or("Path not found")?;
     let mut entries: Vec<DirEntry> = node.children.iter().map(|c| c.to_dir_entry()).collect();
     entries.sort_by(|a, b| b.logical_size.cmp(&a.logical_size));
     Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// 8. Surgically remove a node from the scan tree (after delete/move)
+// ---------------------------------------------------------------------------
+
+/// 删除/移走某项后，从内存树中摘除该节点并回减祖先大小 —— 不重扫。
+/// 此前删除根级条目会触发整盘重扫（分钟级），界面看起来就是"删了没反应"。
+#[tauri::command]
+pub fn remove_scan_node(path: String, state: State<'_, ScanState>) -> Result<(), String> {
+    let norm = normalize(&path);
+    let parent_path = match norm.rfind('\\') {
+        Some(i) => normalize(&norm[..i]),
+        None => return Err("Cannot remove root".into()),
+    };
+
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let tree = guard.as_mut().ok_or("No scan data")?;
+    let parent = find_node_mut(tree, &parent_path)
+        .ok_or_else(|| format!("Parent not found: {parent_path}"))?;
+    let idx = parent
+        .children
+        .iter()
+        .position(|c| normalize(&c.path).eq_ignore_ascii_case(&norm))
+        .ok_or_else(|| format!("Node not found: {norm}"))?;
+    let removed = parent.children.remove(idx);
+
+    let (delta_files, delta_dirs) = if removed.is_dir {
+        (-(removed.files as i64), -(removed.subdirs as i64) - 1)
+    } else {
+        (-1, 0)
+    };
+    let delta_size = -(removed.logical_size as i64);
+
+    // 父节点也是 norm 的真祖先，adjust_ancestors 会一并处理
+    adjust_ancestors(tree, &norm, delta_size, delta_files, delta_dirs);
+    Ok(())
 }

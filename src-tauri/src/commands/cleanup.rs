@@ -20,17 +20,30 @@ pub struct DeleteResult {
     error: Option<String>,
 }
 
+// 注意：磁盘遍历/删除/回收站（COM）都是重操作，同步命令会在主线程执行并冻结 UI，
+// 因此这两个命令必须 async + spawn_blocking。
+
 #[tauri::command]
-pub fn get_items_info(paths: Vec<String>) -> Vec<ItemInfo> {
-    paths.into_iter().filter_map(|p| {
-        let meta = fs::metadata(&p).ok()?;
-        let size = if meta.is_dir() { dir_size(Path::new(&p)) } else { meta.len() };
-        Some(ItemInfo { path: p, size, is_dir: meta.is_dir() })
-    }).collect()
+pub async fn get_items_info(paths: Vec<String>) -> Result<Vec<ItemInfo>, String> {
+    tokio::task::spawn_blocking(move || {
+        paths.into_iter().filter_map(|p| {
+            let meta = fs::metadata(&p).ok()?;
+            let size = if meta.is_dir() { dir_size(Path::new(&p)) } else { meta.len() };
+            Some(ItemInfo { path: p, size, is_dir: meta.is_dir() })
+        }).collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn delete_items(app: tauri::AppHandle, paths: Vec<String>, to_trash: bool) -> Vec<DeleteResult> {
+pub async fn delete_items(app: tauri::AppHandle, paths: Vec<String>, to_trash: bool) -> Result<Vec<DeleteResult>, String> {
+    tokio::task::spawn_blocking(move || delete_items_blocking(&app, paths, to_trash))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn delete_items_blocking(app: &tauri::AppHandle, paths: Vec<String>, to_trash: bool) -> Vec<DeleteResult> {
     let log_dir = app.path().app_data_dir().unwrap_or_default();
     let _ = fs::create_dir_all(&log_dir);
     let log_path = log_dir.join("cleanup-log.jsonl");
@@ -62,15 +75,21 @@ pub fn delete_items(app: tauri::AppHandle, paths: Vec<String>, to_trash: bool) -
 
 pub(crate) fn is_protected(p: &str) -> bool {
     let norm = p.replace('/', "\\");
+    // 盘符根（"D:" / "D:\"）或异常短路径一律保护；
+    // get() 而非直接切片，避免短路径/非字符边界 panic
+    let rest = match norm.get(3..) {
+        Some(r) if !r.is_empty() => r,
+        _ => return true,
+    };
     // Check if path is a root-level system directory like C:\Windows
     for prot in PROTECTED {
-        if norm.len() > 3 && norm[3..].eq_ignore_ascii_case(prot) {
+        if rest.eq_ignore_ascii_case(prot) {
             return true;
         }
-        if norm[3..].to_ascii_lowercase().starts_with(&prot.to_ascii_lowercase())
-            && norm.as_bytes().get(3 + prot.len()) == Some(&b'\\')
-        {
-            return true;
+        if let Some(prefix) = rest.get(..prot.len()) {
+            if prefix.eq_ignore_ascii_case(prot) && rest.as_bytes().get(prot.len()) == Some(&b'\\') {
+                return true;
+            }
         }
     }
     false
