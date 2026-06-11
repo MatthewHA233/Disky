@@ -30,6 +30,36 @@ npx tsc --noEmit                          # 前端
 # 直接 cargo xwin build 即可，编译本身就会检查
 ```
 
+### Rust 改动后的重启流程
+
+改了 `src-tauri/src/**/*.rs` 后按顺序处理。运行中的 `disky.exe` 会占用 debug 产物，
+必须先 kill 再编译：
+
+```powershell
+# 1. 关闭运行中的应用（否则编译报 "文件被占用"）
+Get-Process disky -ErrorAction SilentlyContinue | Stop-Process -Force
+
+# 2. 编译后端 debug 产物（绝对路径，避免 Bash 工具 cwd 漂移）
+cd D:\my_pro\py_ob\Disky\src-tauri && cargo xwin build
+
+# 3. 重启 exe（前端 Vite dev server 由用户保持运行，不要重启）
+D:\my_pro\py_ob\Disky\src-tauri\target\x86_64-pc-windows-msvc\debug\disky.exe
+```
+
+### WebView2 DevTools MCP 调试（看真实 DOM / 控制台 / 截图）
+
+调试 Tauri 内嵌 WebView2 页面时，用远程调试端口启动 exe，chrome-devtools MCP 即可连上，
+直接查看真实 DOM、页面文本、console、截图，不必靠猜：
+
+```powershell
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"
+D:\my_pro\py_ob\Disky\src-tauri\target\x86_64-pc-windows-msvc\debug\disky.exe
+```
+
+连接前先确认端口可访问：`http://127.0.0.1:9222/json/version`。
+MCP 配置（stdio）：`npx -y chrome-devtools-mcp@latest --browser-url=http://127.0.0.1:9222 --no-usage-statistics`。
+连上后用 `list_pages` / `select_page` / `take_snapshot` / `list_console_messages` 调试当前会话。
+
 构建 Windows 安装包（MSI + NSIS EXE）：
 
 ```bash
