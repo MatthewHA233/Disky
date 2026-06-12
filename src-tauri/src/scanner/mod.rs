@@ -58,6 +58,21 @@ pub fn is_strict_ancestor(ancestor: &str, target: &str) -> bool {
     target.as_bytes().get(ancestor.len()) == Some(&SEP_BYTE)
 }
 
+/// 文件实际占盘大小。
+/// Unix 用分配块数（st_blocks×512）：稀疏文件（Docker.raw 逻辑 228G/实占 1.2G）、
+/// APFS 透明压缩文件按真实占用统计，与 du/df 口径一致。
+/// Windows 维持逻辑大小（Win32 扫描路径用的也是 end_of_file）。
+#[cfg(unix)]
+pub fn file_disk_size(meta: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.blocks() * 512
+}
+
+#[cfg(windows)]
+pub fn file_disk_size(meta: &std::fs::Metadata) -> u64 {
+    meta.len()
+}
+
 /// 取路径最后一段作为显示名；根路径（"/"、"C:"）返回其本身。
 pub fn path_file_name(p: &str) -> String {
     match p.rsplit_once(SEP) {

@@ -224,7 +224,10 @@ fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
         let size = if is_dir {
             0
         } else {
-            entry.metadata().map(|m| m.len()).unwrap_or(0)
+            entry
+                .metadata()
+                .map(|m| super::file_disk_size(&m))
+                .unwrap_or(0)
         };
         Some(RawEntry {
             name: entry.file_name().to_string_lossy().to_string(),

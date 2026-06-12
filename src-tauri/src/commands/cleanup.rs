@@ -34,7 +34,11 @@ pub async fn get_items_info(paths: Vec<String>) -> Result<Vec<ItemInfo>, String>
     tokio::task::spawn_blocking(move || {
         paths.into_iter().filter_map(|p| {
             let meta = fs::metadata(&p).ok()?;
-            let size = if meta.is_dir() { dir_size(Path::new(&p)) } else { meta.len() };
+            let size = if meta.is_dir() {
+                dir_size(Path::new(&p))
+            } else {
+                crate::scanner::file_disk_size(&meta)
+            };
             Some(ItemInfo { path: p, size, is_dir: meta.is_dir() })
         }).collect()
     })
@@ -152,7 +156,7 @@ pub(crate) fn dir_size(path: &Path) -> u64 {
         entries.filter_map(|e| e.ok()).map(|e| {
             let meta = e.metadata().ok();
             if meta.as_ref().map_or(false, |m| m.is_dir()) { dir_size(&e.path()) }
-            else { meta.map_or(0, |m| m.len()) }
+            else { meta.map_or(0, |m| crate::scanner::file_disk_size(&m)) }
         }).sum()
     }).unwrap_or(0)
 }

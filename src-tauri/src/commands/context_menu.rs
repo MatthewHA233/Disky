@@ -234,7 +234,10 @@ fn empty_folder_blocking(path: &str, to_trash: bool) -> Result<EmptyFolderResult
         let entry_size = if entry_path.is_dir() {
             dir_size(&entry_path)
         } else {
-            entry.metadata().map(|m| m.len()).unwrap_or(0)
+            entry
+                .metadata()
+                .map(|m| crate::scanner::file_disk_size(&m))
+                .unwrap_or(0)
         };
         let result = if to_trash {
             trash::delete(&entry_path).map_err(|e| e.to_string())
