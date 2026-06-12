@@ -238,12 +238,21 @@ fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
     .collect()
 }
 
-/// macOS：扫描时跳过的特殊目录。
-/// /System/Volumes 下是 Data 固件链接（与 "/" 数据重复）、Preboot/VM 等系统卷；
-/// /Volumes 是其他磁盘的挂载点（应单独扫描）；/dev 是设备文件系统。
+/// macOS：扫描时跳过的特殊目录 —— 只跳会「重复计数」或「不属于本卷」的：
+/// - /System/Volumes/Data 是数据卷固件链接挂载，内容与 "/" 下的 /Users 等重复
+/// - /System/Volumes/Update/mnt1（及 SFR/mnt1）是密封系统快照的二次挂载，与 "/" 重复
+/// - /Volumes 是其他磁盘的挂载点（应单独扫描）；/dev 是设备文件系统
+/// VM（swap/休眠）、Preboot、Update 本体是真实占用的独立系统卷，照常纳入统计。
 #[cfg(target_os = "macos")]
 fn should_skip_dir(path: &str) -> bool {
-    matches!(path, "/System/Volumes" | "/Volumes" | "/dev")
+    matches!(
+        path,
+        "/System/Volumes/Data"
+            | "/System/Volumes/Update/mnt1"
+            | "/System/Volumes/Update/SFR/mnt1"
+            | "/Volumes"
+            | "/dev"
+    )
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
