@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::fs;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
@@ -10,7 +11,13 @@ use tauri::State;
 use super::cleanup::{is_protected, dir_size};
 use super::scan::{adjust_ancestors, find_node, find_node_mut, normalize, ScanState};
 use crate::scanner::walk::{scan_tree, ScanProgress};
-use crate::scanner::DirEntry;
+use crate::scanner::{DirEntry, SEP};
+
+/// AppleScript 字符串字面量转义（双引号与反斜杠）
+#[cfg(target_os = "macos")]
+fn osa_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
 
 #[derive(Serialize)]
 pub struct EmptyFolderResult {
@@ -28,6 +35,7 @@ pub struct MoveResult {
 // 1. Open with default program
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
     let norm = path.replace('/', "\\");
@@ -39,10 +47,21 @@ pub fn open_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    Command::new("open")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("Failed to open: {e}"))?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
-// 2. Show in Explorer (select the item)
+// 2. Show in Explorer / Finder (select the item)
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn show_in_explorer(path: String) -> Result<(), String> {
     let norm = path.replace('/', "\\");
@@ -53,21 +72,49 @@ pub fn show_in_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn show_in_explorer(path: String) -> Result<(), String> {
+    // open -R：在 Finder 中显示并选中该项
+    Command::new("open")
+        .args(["-R", &path])
+        .spawn()
+        .map_err(|e| format!("Failed to reveal in Finder: {e}"))?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
-// 3. Open in CMD or PowerShell
+// 3. Open in terminal (Windows: CMD/PowerShell; macOS: Terminal.app)
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
-pub fn open_in_terminal(path: String, shell: String) -> Result<(), String> {
-    let norm = path.replace('/', "\\");
-    let dir = if Path::new(&norm).is_dir() {
+/// 把路径归一化后取所在目录（文件 → 其父目录）
+fn terminal_dir(norm: String) -> String {
+    if Path::new(&norm).is_dir() {
         norm
     } else {
         Path::new(&norm)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| norm)
-    };
+            .unwrap_or(norm)
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn open_in_terminal(path: String, shell: String) -> Result<(), String> {
+    let _ = shell; // mac 上忽略 shell 参数，统一打开 Terminal.app
+    let dir = terminal_dir(path);
+    Command::new("open")
+        .args(["-a", "Terminal", &dir])
+        .spawn()
+        .map_err(|e| format!("Failed to open Terminal: {e}"))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub fn open_in_terminal(path: String, shell: String) -> Result<(), String> {
+    let dir = terminal_dir(path.replace('/', "\\"));
 
     match shell.as_str() {
         "cmd" => {
@@ -95,9 +142,33 @@ pub fn open_in_terminal(path: String, shell: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Show Windows Properties dialog
+// 4. Show properties (Windows: 属性对话框; macOS: Finder 显示简介)
 // ---------------------------------------------------------------------------
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn show_properties(path: String) -> Result<(), String> {
+    let script = format!(
+        r#"tell application "Finder"
+    open information window of (POSIX file "{}" as alias)
+    activate
+end tell"#,
+        osa_escape(&path)
+    );
+    Command::new("osascript")
+        .args(["-e", &script])
+        .spawn()
+        .map_err(|e| format!("Failed to show info: {e}"))?;
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+#[tauri::command]
+pub fn show_properties(_path: String) -> Result<(), String> {
+    Err("Not supported on this platform".into())
+}
+
+#[cfg(windows)]
 #[tauri::command]
 pub fn show_properties(path: String) -> Result<(), String> {
     let norm = path.replace('/', "\\");
@@ -136,7 +207,7 @@ pub async fn empty_folder(path: String, to_trash: bool) -> Result<EmptyFolderRes
 }
 
 fn empty_folder_blocking(path: &str, to_trash: bool) -> Result<EmptyFolderResult, String> {
-    let norm = path.replace('/', "\\");
+    let norm = normalize(path);
     let p = Path::new(&norm);
 
     if !p.is_dir() {
@@ -196,21 +267,40 @@ pub async fn pick_folder_and_move(path: String) -> Result<MoveResult, String> {
         .map_err(|e| e.to_string())?
 }
 
-fn pick_folder_and_move_blocking(path: &str) -> Result<MoveResult, String> {
-    let norm = path.replace('/', "\\");
-    if is_protected(&norm) {
-        return Err("Protected system path".into());
-    }
-
-    // Open folder picker via PowerShell FolderBrowserDialog
+/// 打开系统文件夹选择框，返回所选目录；取消时返回空串。
+#[cfg(windows)]
+fn pick_folder() -> Result<String, String> {
     let picker_script = r#"Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '选择目标文件夹'; if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath } else { '' }"#;
-
     let output = Command::new("powershell")
         .args(["-NoProfile", "-Command", picker_script])
         .output()
         .map_err(|e| format!("Failed to open folder picker: {e}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
 
-    let dest_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+#[cfg(not(windows))]
+fn pick_folder() -> Result<String, String> {
+    // osascript choose folder：用户取消时退出码非 0（"User canceled"），按取消处理
+    let output = Command::new("osascript")
+        .args([
+            "-e",
+            r#"POSIX path of (choose folder with prompt "选择目标文件夹")"#,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to open folder picker: {e}"))?;
+    if !output.status.success() {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn pick_folder_and_move_blocking(path: &str) -> Result<MoveResult, String> {
+    let norm = normalize(path);
+    if is_protected(&norm) {
+        return Err("Protected system path".into());
+    }
+
+    let dest_dir = pick_folder()?;
     if dest_dir.is_empty() {
         return Err("cancelled".into());
     }
@@ -232,20 +322,8 @@ fn pick_folder_and_move_blocking(path: &str) -> Result<MoveResult, String> {
             new_path: dest.to_string_lossy().to_string(),
         }),
         Err(_) => {
-            // Fall back to PowerShell Move-Item for cross-drive
-            let move_output = Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    &format!(
-                        "Move-Item -LiteralPath '{}' -Destination '{}' -Force",
-                        norm.replace('\'', "''"),
-                        dest.to_string_lossy().replace('\'', "''")
-                    ),
-                ])
-                .output()
-                .map_err(|e| format!("Move failed: {e}"))?;
-
+            // Cross-volume move fallback
+            let move_output = cross_volume_move(&norm, &dest)?;
             if move_output.status.success() {
                 Ok(MoveResult {
                     new_path: dest.to_string_lossy().to_string(),
@@ -256,6 +334,32 @@ fn pick_folder_and_move_blocking(path: &str) -> Result<MoveResult, String> {
             }
         }
     }
+}
+
+#[cfg(windows)]
+fn cross_volume_move(src: &str, dest: &Path) -> Result<std::process::Output, String> {
+    Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "Move-Item -LiteralPath '{}' -Destination '{}' -Force",
+                src.replace('\'', "''"),
+                dest.to_string_lossy().replace('\'', "''")
+            ),
+        ])
+        .output()
+        .map_err(|e| format!("Move failed: {e}"))
+}
+
+#[cfg(not(windows))]
+fn cross_volume_move(src: &str, dest: &Path) -> Result<std::process::Output, String> {
+    // /bin/mv 自带跨卷 copy+unlink 回退
+    Command::new("mv")
+        .arg(src)
+        .arg(dest)
+        .output()
+        .map_err(|e| format!("Move failed: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +430,7 @@ pub async fn refresh_scan_node(
 #[tauri::command]
 pub fn remove_scan_node(path: String, state: State<'_, ScanState>) -> Result<(), String> {
     let norm = normalize(&path);
-    let parent_path = match norm.rfind('\\') {
+    let parent_path = match norm.rfind(SEP) {
         Some(i) => normalize(&norm[..i]),
         None => return Err("Cannot remove root".into()),
     };
