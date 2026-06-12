@@ -51,9 +51,16 @@ fn candidate_dirs() -> Vec<PathBuf> {
         dirs.push(home.join(".local").join("bin"));
         dirs.push(home.join(".bun").join("bin"));
         dirs.push(home.join("AppData").join("Roaming").join("npm"));
+        // macOS 原生安装器位置（GUI 应用的 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin）
+        dirs.push(home.join(".claude").join("local"));
     }
     if let Ok(appdata) = std::env::var("APPDATA") {
         dirs.push(PathBuf::from(appdata).join("npm"));
+    }
+    #[cfg(not(windows))]
+    {
+        dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        dirs.push(PathBuf::from("/usr/local/bin"));
     }
     dirs
 }
@@ -789,7 +796,12 @@ const CLEANUP_PLAN_CANDIDATES: &[&str] = &[
 fn take_cleanup_plan(workspace: &std::path::Path) -> Option<Vec<CleanupPlanItem>> {
     let file = CLEANUP_PLAN_CANDIDATES
         .iter()
-        .map(|rel| workspace.join(rel.replace('/', "\\")))
+        .map(|rel| {
+            // PathBuf::join 接受 "/" 相对路径，但 Windows 上统一成 "\" 以保持路径字符串一致
+            #[cfg(windows)]
+            let rel = rel.replace('/', "\\");
+            workspace.join(&*rel)
+        })
         .find(|p| p.is_file())?;
     let text = std::fs::read_to_string(&file).ok()?;
     let _ = std::fs::remove_file(&file);
@@ -799,7 +811,7 @@ fn take_cleanup_plan(workspace: &std::path::Path) -> Option<Vec<CleanupPlanItem>
     let valid: Vec<CleanupPlanItem> = items
         .into_iter()
         .filter(|i| {
-            let p = i.path.replace('/', "\\");
+            let p = crate::scanner::normalize_path(&i.path);
             std::path::Path::new(&p).is_absolute()
                 && !crate::commands::cleanup::is_protected(&p)
                 && std::path::Path::new(&p).exists()
