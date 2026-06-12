@@ -59,6 +59,8 @@ pub fn run() {
             commands::watcher::start_watch,
             commands::watcher::stop_watch,
             commands::watcher::set_watch_path,
+            commands::permissions::check_full_disk_access,
+            commands::permissions::open_full_disk_access_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

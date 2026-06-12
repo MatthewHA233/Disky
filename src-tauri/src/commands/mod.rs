@@ -8,3 +8,4 @@ pub mod notes;
 pub mod context_menu;
 pub mod tags;
 pub mod watcher;
+pub mod permissions;

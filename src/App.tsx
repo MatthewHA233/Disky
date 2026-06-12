@@ -16,6 +16,8 @@ import { AiSettingsDialog } from "./components/AiSettingsDialog";
 import { AnalyzeConfirmDialog } from "./components/AnalyzeConfirmDialog";
 import { ContextMenu } from "./components/ContextMenu";
 import { AnalyzeStreamViewer } from "./components/AnalyzeStreamViewer";
+import { FullDiskAccessDialog } from "./components/FullDiskAccessDialog";
+import { checkFullDiskAccess } from "./lib/invoke";
 import { ScanProgressBar } from "./components/ScanProgressBar";
 import { getChildren, getItemsInfo, saveCleanupLog, removeScanNode } from "./lib/invoke";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -53,6 +55,14 @@ export default function App() {
 
   // AI 提交的清理计划（聊天里用户同意后 agent 写入 requests/，这里弹确认窗）
   const [aiCleanup, setAiCleanup] = useState<Map<string, number> | null>(null);
+
+  // macOS：启动时检测完全磁盘访问权限，缺失则弹引导窗（Windows 恒为已授权）
+  const [showFdaDialog, setShowFdaDialog] = useState(false);
+  useEffect(() => {
+    checkFullDiskAccess()
+      .then((ok) => { if (!ok) setShowFdaDialog(true); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
@@ -416,6 +426,9 @@ export default function App() {
       )}
 
       {/* Dialogs */}
+      {showFdaDialog && (
+        <FullDiskAccessDialog onClose={() => setShowFdaDialog(false)} />
+      )}
       {dialog === "cleanup" && (
         <CleanupDialog
           selected={selected}

@@ -104,3 +104,7 @@ export const listTaggedPaths = (tagId?: number) =>
 export const startWatch = (root: string) => invoke<void>("start_watch", { root });
 export const stopWatch = () => invoke<void>("stop_watch");
 export const setWatchPath = (path: string) => invoke<void>("set_watch_path", { path });
+
+// macOS 完全磁盘访问权限（Windows 上 check 恒为 true，open 为 no-op）
+export const checkFullDiskAccess = () => invoke<boolean>("check_full_disk_access");
+export const openFullDiskAccessSettings = () => invoke<void>("open_full_disk_access_settings");
