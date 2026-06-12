@@ -20,6 +20,9 @@ interface Props {
   onClose: () => void;
 }
 
+/** 代理默认值：本机 Clash 常用端口。打开设置时空值会自动填上，不用时清空保存即可 */
+const DEFAULT_PROXY_URL = "http://127.0.0.1:7890";
+
 export function AiSettingsDialog({ onClose }: Props) {
   const [settings, setSettings] = useState<AiSettings>({
     api_key: "",
@@ -29,7 +32,7 @@ export function AiSettingsDialog({ onClose }: Props) {
     api_type: "anthropic",
     provider: "api",
     cli_model: "default",
-    proxy_url: "",
+    proxy_url: DEFAULT_PROXY_URL,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +49,8 @@ export function AiSettingsDialog({ onClose }: Props) {
     }
     loadAiSettings()
       .then((s) => {
-        setSettings(s);
+        // 已保存过空代理的旧设置也预填默认值，方便一键保存启用
+        setSettings({ ...s, proxy_url: s.proxy_url || DEFAULT_PROXY_URL });
         if (s.provider === "claude-code") runDetection();
       })
       .catch(() => { });

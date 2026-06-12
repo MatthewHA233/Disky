@@ -41,7 +41,8 @@ impl Default for AiSettings {
             api_type: "anthropic".into(),
             provider: default_provider(),
             cli_model: default_cli_model(),
-            proxy_url: String::new(),
+            // 默认填本机 Clash 常用端口；不需要代理时在设置里清空即可
+            proxy_url: "http://127.0.0.1:7890".into(),
         }
     }
 }
