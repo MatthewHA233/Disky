@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DirEntry, DriveInfo, ScanProgressEvent, ScanTreeEvent } from "../types";
 import { listDrives, scanDisk, startWatch, stopWatch, setWatchPath } from "../lib/invoke";
+import { normalizePath } from "../lib/path";
 
 export type ScanStatus = "idle" | "scanning" | "done" | "error";
 
@@ -153,7 +154,7 @@ export function useScanSession(): ScanSession {
 
     try {
       await scanDisk(selectedDrive);
-      const newRootPath = selectedDrive.replace(/\\$/, "");
+      const newRootPath = normalizePath(selectedDrive);
       setStatus("done");
       setRootPath(newRootPath);
       refreshDrives();
@@ -194,7 +195,7 @@ export function useScanSession(): ScanSession {
   const loadFromHistory = useCallback((root: string, children: DirEntry[]) => {
     // Find the matching drive in the dropdown list
     const matchDrive = drives.find(
-      (d) => d.mount_point.replace(/\\$/, "") === root
+      (d) => normalizePath(d.mount_point) === normalizePath(root)
     )?.mount_point;
 
     skipResetRef.current = true;

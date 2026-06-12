@@ -1,5 +1,6 @@
 import type { ScanSession } from "../hooks/useScanSession";
 import { formatSize, formatNumber } from "../lib/format";
+import { normalizePath } from "../lib/path";
 import { CheckCircle2, XCircle, Loader2, Activity } from "lucide-react";
 
 interface Props {
@@ -19,7 +20,8 @@ export function StatusBar({ scan }: Props) {
   if (scan.status === "scanning") {
     const p = scan.progress;
     const drive = scan.drives.find(d =>
-      d.mount_point.replace(/\\$/, "") === scan.selectedDrive?.replace(/\\$/, "")
+      scan.selectedDrive != null &&
+      normalizePath(d.mount_point) === normalizePath(scan.selectedDrive)
     );
     const usedSpace = drive ? drive.total_space - drive.available_space : 0;
     const pct = p && usedSpace > 0

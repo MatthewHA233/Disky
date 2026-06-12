@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from "react";
 import type { AiAnalysis, DirEntry } from "../types";
 import { getChildren } from "../lib/invoke";
 import { formatSize, formatNumber } from "../lib/format";
+import { basename } from "../lib/path";
 import { StarRating } from "./StarRating";
 import { ChevronRight, Loader2, Sparkles } from "lucide-react";
 import gsap from "gsap";
@@ -225,7 +226,7 @@ export function TreeMap({ liveChildren, scanning, analyses, onAnalyzePath, analy
                 )}
                 onClick={() => goBack(i)}
               >
-                {p.split("\\").pop() || p}
+                {basename(p)}
               </span>
             </div>
           ))}

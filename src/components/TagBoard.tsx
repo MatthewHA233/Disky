@@ -3,6 +3,7 @@ import { Plus, X, Settings, FolderOpen, File, Pencil, Check, FolderMinus } from 
 import { cn } from "../lib/utils";
 import { emptyFolder, getItemsInfo } from "../lib/invoke";
 import { formatSize } from "../lib/format";
+import { TRASH_NAME } from "../lib/path";
 import { StarRating } from "./StarRating";
 import type { AiAnalysis, DirEntry, Tag, TaggedPath } from "../types";
 
@@ -272,7 +273,7 @@ export function TagBoard({
               className="px-3 py-1 text-[11px] rounded-md bg-[#E74C3C] text-white hover:bg-[#C0392B] transition-colors"
               disabled={emptyLoading}
               onClick={() => handleEmptyFolder(true)}
-            >{emptyLoading ? "处理中..." : "移至回收站"}</button>
+            >{emptyLoading ? "处理中..." : `移至${TRASH_NAME}`}</button>
           </div>
         </div>
       )}

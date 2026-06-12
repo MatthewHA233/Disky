@@ -12,6 +12,7 @@ import {
   refreshScanNode, removeScanNode, deleteItems,
 } from "../lib/invoke";
 import { cn } from "../lib/utils";
+import { IS_WINDOWS, TRASH_NAME } from "../lib/path";
 import { TagPicker } from "./TagPicker";
 
 interface Props {
@@ -188,23 +189,36 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
         action: handleCopy,
       },
     ],
-    [
-      {
-        id: "explorer", label: "在资源管理器中打开",
-        icon: <FolderOpen className="w-3.5 h-3.5" />,
-        action: () => runAction(() => showInExplorer(entry.path)),
-      },
-      {
-        id: "cmd", label: "在命令提示符中打开",
-        icon: <Terminal className="w-3.5 h-3.5" />,
-        action: () => runAction(() => openInTerminal(entry.path, "cmd")),
-      },
-      {
-        id: "ps", label: "在 PowerShell 中打开",
-        icon: <Terminal className="w-3.5 h-3.5" />,
-        action: () => runAction(() => openInTerminal(entry.path, "powershell")),
-      },
-    ],
+    IS_WINDOWS
+      ? [
+          {
+            id: "explorer", label: "在资源管理器中打开",
+            icon: <FolderOpen className="w-3.5 h-3.5" />,
+            action: () => runAction(() => showInExplorer(entry.path)),
+          },
+          {
+            id: "cmd", label: "在命令提示符中打开",
+            icon: <Terminal className="w-3.5 h-3.5" />,
+            action: () => runAction(() => openInTerminal(entry.path, "cmd")),
+          },
+          {
+            id: "ps", label: "在 PowerShell 中打开",
+            icon: <Terminal className="w-3.5 h-3.5" />,
+            action: () => runAction(() => openInTerminal(entry.path, "powershell")),
+          },
+        ]
+      : [
+          {
+            id: "explorer", label: "在 Finder 中显示",
+            icon: <FolderOpen className="w-3.5 h-3.5" />,
+            action: () => runAction(() => showInExplorer(entry.path)),
+          },
+          {
+            id: "terminal", label: "在终端中打开",
+            icon: <Terminal className="w-3.5 h-3.5" />,
+            action: () => runAction(() => openInTerminal(entry.path, "terminal")),
+          },
+        ],
     [
       {
         id: "tag", label: "标记标签",
@@ -227,7 +241,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
         },
       },
       {
-        id: "props", label: "属性", shortcut: "Alt+Enter",
+        id: "props", label: IS_WINDOWS ? "属性" : "显示简介", shortcut: "Alt+Enter",
         icon: <Info className="w-3.5 h-3.5" />,
         action: () => runAction(() => showProperties(entry.path)),
       },
@@ -248,7 +262,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
     ],
     [
       {
-        id: "trash", label: "删除至回收站", shortcut: "Del",
+        id: "trash", label: `删除至${TRASH_NAME}`, shortcut: "Del",
         icon: <Trash2 className="w-3.5 h-3.5" />,
         danger: true,
         action: () => setConfirm("delete-trash"),
@@ -286,9 +300,9 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
   // Inline confirmation panel
   if (confirm) {
     const labels: Record<NonNullable<ConfirmAction>, { title: string; desc: string; btn: string; danger: boolean }> = {
-      "empty-trash": { title: "清空文件夹", desc: `将 ${entry.name} 的所有内容移至回收站`, btn: "确认清空", danger: false },
+      "empty-trash": { title: "清空文件夹", desc: `将 ${entry.name} 的所有内容移至${TRASH_NAME}`, btn: "确认清空", danger: false },
       "empty-perm": { title: "永久清空", desc: `永久删除 ${entry.name} 内所有文件`, btn: "永久清空", danger: true },
-      "delete-trash": { title: "删除至回收站", desc: `将 ${entry.name} 移至回收站`, btn: "确认删除", danger: false },
+      "delete-trash": { title: `删除至${TRASH_NAME}`, desc: `将 ${entry.name} 移至${TRASH_NAME}`, btn: "确认删除", danger: false },
       "delete-perm": { title: "永久删除", desc: `永久删除 ${entry.name}，不可恢复`, btn: "永久删除", danger: true },
       "move": { title: "移动到...", desc: `选择目标文件夹移动 ${entry.name}`, btn: "选择文件夹", danger: false },
     };

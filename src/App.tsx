@@ -20,6 +20,7 @@ import { ScanProgressBar } from "./components/ScanProgressBar";
 import { getChildren, getItemsInfo, saveCleanupLog, removeScanNode } from "./lib/invoke";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useMemo } from "react";
+import { basename, normalizePath, parentPath, pathChain, isSameOrInside } from "./lib/path";
 import type { AiAnalysis, AnalyzePathInput, ContextMenuTarget } from "./types";
 
 type Dialog = "cleanup" | "history" | "ai-settings" | null;
@@ -27,20 +28,7 @@ type ViewMode = "tree" | "tags";
 
 /** Build the full ancestor chain from rootPath down to targetPath */
 function buildAncestry(targetPath: string, rootPath: string): string[] {
-  const norm = (p: string) => p.replace(/\//g, "\\").replace(/\\$/, "");
-  const normTarget = norm(targetPath);
-  const normRoot = norm(rootPath);
-  if (normTarget === normRoot) return [rootPath];
-  if (!normTarget.startsWith(normRoot + "\\")) return [rootPath, targetPath];
-  const relative = normTarget.slice(normRoot.length + 1);
-  const segments = relative.split("\\").filter(Boolean);
-  const result: string[] = [rootPath];
-  let current = normRoot;
-  for (const seg of segments) {
-    current = current + "\\" + seg;
-    result.push(current);
-  }
-  return result;
+  return pathChain(rootPath, targetPath);
 }
 
 export default function App() {
@@ -102,7 +90,8 @@ export default function App() {
   const scanPct = useMemo(() => {
     if (!scanning || !scan.progress) return 0;
     const drive = scan.drives.find(d =>
-      d.mount_point.replace(/\\$/, "") === scan.selectedDrive?.replace(/\\$/, "")
+      scan.selectedDrive != null &&
+      normalizePath(d.mount_point) === normalizePath(scan.selectedDrive)
     );
     const usedSpace = drive ? drive.total_space - drive.available_space : 0;
     return usedSpace > 0 ? Math.min(99, (scan.progress.total_size / usedSpace) * 100) : 0;
@@ -129,11 +118,7 @@ export default function App() {
   // Filter tagged paths to only those belonging to the current scanned drive
   const filteredTaggedPaths = useMemo(() => {
     if (!scan.rootPath) return tagSystem.taggedPaths;
-    const root = scan.rootPath.toLowerCase().replace(/\\$/, "");
-    return tagSystem.taggedPaths.filter((tp) => {
-      const p = tp.path.toLowerCase().replace(/\\$/, "");
-      return p === root || p.startsWith(root + "\\");
-    });
+    return tagSystem.taggedPaths.filter((tp) => isSameOrInside(scan.rootPath!, tp.path));
   }, [tagSystem.taggedPaths, scan.rootPath]);
 
   // Save/restore selections and navPath on drive switch
@@ -176,22 +161,14 @@ export default function App() {
       if (!scan.rootPath) return;
       // 文件路径跳到所在目录
       const looksLikeFile = /\.[A-Za-z0-9]{1,6}$/.test(target);
-      let t = (looksLikeFile ? target.slice(0, target.lastIndexOf("\\")) : target).replace(/\\+$/, "");
-      const root = scan.rootPath.replace(/\\+$/, "");
+      const t = normalizePath(looksLikeFile ? parentPath(target) ?? target : target);
+      const root = normalizePath(scan.rootPath);
       if (!t || t.toLowerCase() === root.toLowerCase()) {
         setNavPath([scan.rootPath]);
         return;
       }
-      if (!(t.toLowerCase() + "\\").startsWith(root.toLowerCase() + "\\")) return;
-      const rel = t.slice(root.length).replace(/^\\/, "");
-      const stack = [scan.rootPath];
-      let cur = root;
-      for (const seg of rel.split("\\")) {
-        if (!seg) continue;
-        cur = cur + "\\" + seg;
-        stack.push(cur);
-      }
-      setNavPath(stack);
+      if (!isSameOrInside(root, t)) return;
+      setNavPath(pathChain(root, t));
     },
     [scan.rootPath]
   );
@@ -304,7 +281,7 @@ export default function App() {
     const infos = await getItemsInfo(paths);
     const items: AnalyzePathInput[] = infos.map((info) => ({
       path: info.path,
-      name: info.path.split("\\").pop() || info.path,
+      name: basename(info.path),
       size: info.size,
       is_dir: info.is_dir,
     }));

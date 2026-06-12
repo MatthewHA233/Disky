@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import type { DeleteResult } from "../types";
 import { deleteItems } from "../lib/invoke";
 import { formatSize } from "../lib/format";
+import { TRASH_NAME } from "../lib/path";
 import gsap from "gsap";
 import { Trash2, AlertTriangle, CheckCircle2, XCircle, ArrowRight, Loader2 } from "lucide-react";
 
@@ -121,7 +122,7 @@ export function CleanupDialog({ selected, onDone, onClose, onCleanupDone }: Prop
                       onChange={(e) => setToTrash(e.target.checked)}
                     />
                     <div className="flex flex-col">
-                      <span className="text-sm font-medium text-textMain group-hover:text-photon transition-colors">移至回收站</span>
+                      <span className="text-sm font-medium text-textMain group-hover:text-photon transition-colors">移至{TRASH_NAME}</span>
                       <span className="text-xs text-text-dim">推荐。取消勾选将永久删除，无法恢复。</span>
                     </div>
                   </label>
@@ -145,7 +146,7 @@ export function CleanupDialog({ selected, onDone, onClose, onCleanupDone }: Prop
                     即将删除 {paths.length} 个项目，释放 {formatSize(totalSize)} 空间。
                     <br /><br />
                     {toTrash ? (
-                      <span className="text-photon">文件将移至回收站，可恢复。</span>
+                      <span className="text-photon">文件将移至{TRASH_NAME}，可恢复。</span>
                     ) : (
                       <span className="text-danger font-semibold">文件将被永久删除，无法恢复！</span>
                     )}

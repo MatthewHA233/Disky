@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import type { CleanupSession } from "../types";
 import { listCleanupLogs } from "../lib/invoke";
 import { formatSize } from "../lib/format";
+import { normalizePath } from "../lib/path";
 import gsap from "gsap";
 import { History, XCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, FolderMinus, Trash2 } from "lucide-react";
 
@@ -112,7 +113,7 @@ export function HistoryDialog({ onClose }: Props) {
                       : <ChevronDown className="w-4 h-4 text-text-dim shrink-0" />
                     }
                     <span className="text-sm font-mono text-textMain font-semibold shrink-0">
-                      {s.drive.replace(/\\$/, "")}
+                      {normalizePath(s.drive)}
                     </span>
                     <span className="text-xs font-mono text-text-dim">
                       {formatSessionTime(s.session_ts)}

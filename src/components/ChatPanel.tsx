@@ -5,6 +5,7 @@ import type { UseChatReturn } from "../hooks/useChat";
 import type { ChatSegment } from "../types";
 import { Bot, Send, Trash2, Settings, Sparkles, Brain, Wrench, Check, X, Plus, MessagesSquare, RefreshCw } from "lucide-react";
 import { cn } from "../lib/utils";
+import { IS_WINDOWS } from "../lib/path";
 
 interface Props {
   chat: UseChatReturn;
@@ -14,14 +15,19 @@ interface Props {
 }
 
 const WIN_PATH_RE = /[A-Za-z]:\\[^\s"'`<>|?*，。；：！？()（）[\]]+/g;
+// macOS：限定常见根目录开头，避免把普通含斜杠文本（如 "输入/输出"）误判成路径
+const MAC_PATH_RE = /\/(?:Users|Applications|Library|System|Volumes|private|opt|usr|var|tmp|etc)\/[^\s"'`<>|?*，。；：！？()（）[\]]+/g;
+const PATH_RE = IS_WINDOWS ? WIN_PATH_RE : MAC_PATH_RE;
+// 工具输入摘要是否是一个可跳转的绝对路径
+const ABS_PATH_TEST = IS_WINDOWS ? /^[A-Za-z]:\\/ : /^\//;
 
-/** 把文本里的 Windows 路径渲染成可点击跳转的链接 */
+/** 把文本里的磁盘绝对路径渲染成可点击跳转的链接 */
 function linkifyPaths(text: string, key: number, onNavigate?: (p: string) => void) {
   if (!onNavigate) {
     return <span key={key} className="whitespace-pre-wrap leading-relaxed">{text}</span>;
   }
   const nodes: (string | ReactElement)[] = [];
-  const re = new RegExp(WIN_PATH_RE.source, "g");
+  const re = new RegExp(PATH_RE.source, "g");
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
@@ -165,7 +171,7 @@ function SegmentList({
             <span className="text-photon/90 shrink-0">{seg.name}</span>
             {(() => {
               const summary = toolInputSummary(seg.input);
-              const isPath = /^[A-Za-z]:\\/.test(summary);
+              const isPath = ABS_PATH_TEST.test(summary);
               return isPath && onNavigate ? (
                 <button
                   type="button"
