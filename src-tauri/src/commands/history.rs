@@ -283,7 +283,7 @@ pub async fn compare_scans(
     let app_clone = app.clone();
     tokio::task::spawn_blocking(move || {
         let conn = ensure_db(&app_clone)?;
-        let norm = root.replace('/', "\\").trim_end_matches('\\').to_string();
+        let norm = crate::scanner::normalize_path(&root);
 
         let file_a = tree_file_for(&conn, id_a)?;
         let file_b = tree_file_for(&conn, id_b)?;
@@ -361,7 +361,7 @@ fn compare_trees(tree_a: &StorableNode, tree_b: &StorableNode, root: &str) -> Ve
 }
 
 fn compare_sql(conn: &Connection, id_a: i64, id_b: i64, norm: &str) -> Result<Vec<DiffEntry>, String> {
-    let prefix = format!("{}\\%", norm);
+    let prefix = format!("{}{}%", norm, crate::scanner::SEP);
     let mut stmt = conn.prepare(
         "SELECT COALESCE(a.path, b.path) as path, COALESCE(a.name, b.name) as name,
                 COALESCE(a.logical_size, 0) as old_size, COALESCE(b.logical_size, 0) as new_size

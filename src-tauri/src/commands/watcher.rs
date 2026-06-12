@@ -28,7 +28,7 @@ impl FsWatchState {
 }
 
 fn norm(p: &str) -> String {
-    p.replace('/', "\\").trim_end_matches('\\').to_string()
+    crate::scanner::normalize_path(p)
 }
 
 #[tauri::command]

@@ -1,8 +1,9 @@
+#[cfg(windows)]
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::TreeNode;
+use super::{join_path, normalize_path, path_file_name, TreeNode};
 
 // ---------------------------------------------------------------------------
 // Win32 API bindings
@@ -86,8 +87,10 @@ pub struct ScanProgress {
 // Each rayon worker thread gets its own buffer — no contention.
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 const DIR_BUF_SIZE: usize = 1024 * 1024; // 1 MB — more entries per syscall
 
+#[cfg(windows)]
 thread_local! {
     static DIR_BUF: RefCell<Vec<u8>> = RefCell::new(vec![0u8; DIR_BUF_SIZE]);
 }
@@ -203,23 +206,66 @@ fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
     entries
 }
 
+/// Unix 实现：readdir + lstat。跳过符号链接（对应 Windows 跳过 reparse point），
+/// 避免循环引用与重复计数。
+#[cfg(unix)]
+fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
+    let rd = match std::fs::read_dir(dir_path) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(), // 无权限/已删除 — 与 Windows 行为一致，静默跳过
+    };
+    rd.filter_map(|entry| {
+        let entry = entry.ok()?;
+        let ft = entry.file_type().ok()?;
+        if ft.is_symlink() {
+            return None;
+        }
+        let is_dir = ft.is_dir();
+        let size = if is_dir {
+            0
+        } else {
+            entry.metadata().map(|m| m.len()).unwrap_or(0)
+        };
+        Some(RawEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            size,
+            is_dir,
+        })
+    })
+    .collect()
+}
+
+/// macOS：扫描时跳过的特殊目录。
+/// /System/Volumes 下是 Data 固件链接（与 "/" 数据重复）、Preboot/VM 等系统卷；
+/// /Volumes 是其他磁盘的挂载点（应单独扫描）；/dev 是设备文件系统。
+#[cfg(target_os = "macos")]
+fn should_skip_dir(path: &str) -> bool {
+    matches!(path, "/System/Volumes" | "/Volumes" | "/dev")
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn should_skip_dir(path: &str) -> bool {
+    matches!(path, "/proc" | "/sys" | "/dev" | "/run")
+}
+
+#[cfg(windows)]
+fn should_skip_dir(_path: &str) -> bool {
+    false
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Recursively scan a directory tree using batch Win32 API + rayon parallelism.
+/// Recursively scan a directory tree using batch OS enumeration + rayon parallelism.
 pub fn scan_tree(root: &str, progress: &Arc<ScanProgress>) -> TreeNode {
-    let norm = normalize(root);
-    let name = norm
-        .rsplit_once('\\')
-        .map(|(_, n)| n.to_string())
-        .unwrap_or_else(|| norm.clone());
+    let norm = normalize_path(root);
+    let name = path_file_name(&norm);
 
     scan_dir(&norm, &name, progress)
 }
 
 /// Parallel recursive directory scanner.
-#[cfg(windows)]
 fn scan_dir(dir_path: &str, dir_name: &str, progress: &Arc<ScanProgress>) -> TreeNode {
     let raw = enumerate_dir(dir_path);
 
@@ -228,7 +274,9 @@ fn scan_dir(dir_path: &str, dir_name: &str, progress: &Arc<ScanProgress>) -> Tre
 
     for entry in raw {
         if entry.is_dir {
-            dir_entries.push(entry);
+            if !should_skip_dir(&join_path(dir_path, &entry.name)) {
+                dir_entries.push(entry);
+            }
         } else {
             file_entries.push(entry);
         }
@@ -243,7 +291,7 @@ fn scan_dir(dir_path: &str, dir_name: &str, progress: &Arc<ScanProgress>) -> Tre
         total_size += f.size;
         children.push(TreeNode {
             name: f.name.clone(),
-            path: format!("{}\\{}", dir_path, f.name),
+            path: join_path(dir_path, &f.name),
             logical_size: f.size,
             files: 0,
             subdirs: 0,
@@ -262,7 +310,7 @@ fn scan_dir(dir_path: &str, dir_name: &str, progress: &Arc<ScanProgress>) -> Tre
         dir_entries
             .par_iter()
             .map(|d| {
-                let child_path = format!("{}\\{}", dir_path, d.name);
+                let child_path = join_path(dir_path, &d.name);
                 scan_dir(&child_path, &d.name, progress)
             })
             .collect()
@@ -270,7 +318,7 @@ fn scan_dir(dir_path: &str, dir_name: &str, progress: &Arc<ScanProgress>) -> Tre
         dir_entries
             .iter()
             .map(|d| {
-                let child_path = format!("{}\\{}", dir_path, d.name);
+                let child_path = join_path(dir_path, &d.name);
                 scan_dir(&child_path, &d.name, progress)
             })
             .collect()
@@ -302,14 +350,14 @@ fn scan_dir(dir_path: &str, dir_name: &str, progress: &Arc<ScanProgress>) -> Tre
 }
 
 /// Non-recursive scan: immediate children only (Phase 1 quick preview).
-#[cfg(windows)]
 pub fn shallow_scan(dir_path: &str) -> Vec<TreeNode> {
-    let norm = normalize(dir_path);
+    let norm = normalize_path(dir_path);
     let raw = enumerate_dir(&norm);
 
     raw.into_iter()
+        .filter(|e| !(e.is_dir && should_skip_dir(&join_path(&norm, &e.name))))
         .map(|e| TreeNode {
-            path: format!("{}\\{}", norm, e.name),
+            path: join_path(&norm, &e.name),
             name: e.name,
             logical_size: e.size,
             files: 0,
@@ -318,8 +366,4 @@ pub fn shallow_scan(dir_path: &str) -> Vec<TreeNode> {
             children: Vec::new(),
         })
         .collect()
-}
-
-fn normalize(p: &str) -> String {
-    p.replace('/', "\\").trim_end_matches('\\').to_string()
 }

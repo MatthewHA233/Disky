@@ -6,7 +6,7 @@ use sysinfo::Disks;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::scanner::walk::{scan_tree, shallow_scan, ScanProgress};
-use crate::scanner::{DirEntry, TreeNode};
+use crate::scanner::{is_strict_ancestor, normalize_path, path_file_name, DirEntry, TreeNode};
 
 #[derive(Serialize)]
 pub struct DriveInfo {
@@ -32,17 +32,53 @@ struct ScanTreeEvent {
 /// Holds the in-memory scan tree.
 pub struct ScanState(pub Mutex<Option<TreeNode>>);
 
+/// macOS：DMG 安装镜像会挂载成 /Volumes 下的只读卷，不是可清理的磁盘。
+/// 用 statfs 的 MNT_RDONLY 标志识别并过滤。
+#[cfg(target_os = "macos")]
+fn is_read_only_volume(mp: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(mp.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut st = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    unsafe {
+        libc::statfs(c.as_ptr(), st.as_mut_ptr()) == 0
+            && (st.assume_init().f_flags & libc::MNT_RDONLY as u32) != 0
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn keep_drive(d: &sysinfo::Disk) -> bool {
+    // APFS 会挂出大量系统卷（/System/Volumes/Preboot、VM、Update 等），
+    // 只保留启动卷 "/" 和外接/其他可写卷 /Volumes/*
+    let mp = d.mount_point().to_string_lossy();
+    mp == "/"
+        || (mp.starts_with("/Volumes/")
+            && !mp.contains("/.timemachine")
+            && !is_read_only_volume(d.mount_point()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keep_drive(_d: &sysinfo::Disk) -> bool {
+    true
+}
+
 #[tauri::command]
 pub fn list_drives() -> Vec<DriveInfo> {
     let disks = Disks::new_with_refreshed_list();
-    disks
+    let mut drives: Vec<DriveInfo> = disks
         .iter()
+        .filter(|d| keep_drive(d))
         .map(|d| DriveInfo {
             mount_point: d.mount_point().to_string_lossy().to_string(),
             total_space: d.total_space(),
             available_space: d.available_space(),
         })
-        .collect()
+        .collect();
+    // 同一卷可能出现多个挂载条目（APFS 快照等）— 按挂载点去重
+    drives.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+    drives.dedup_by(|a, b| a.mount_point == b.mount_point);
+    drives
 }
 
 #[tauri::command]
@@ -57,7 +93,7 @@ pub async fn scan_disk(
         total_size: AtomicU64::new(0),
     });
 
-    let norm = path.replace('/', "\\").trim_end_matches('\\').to_string();
+    let norm = normalize_path(&path);
 
     // Start periodic progress reporter (200 ms interval)
     let done = Arc::new(AtomicBool::new(false));
@@ -148,10 +184,7 @@ pub async fn scan_disk(
 
             children.sort_unstable_by(|a, b| b.logical_size.cmp(&a.logical_size));
 
-            let root_name = norm
-                .rsplit_once('\\')
-                .map(|(_, n)| n.to_string())
-                .unwrap_or_else(|| norm.clone());
+            let root_name = path_file_name(&norm);
             let total_size: u64 = children.iter().map(|c| c.logical_size).sum();
             let total_files: u64 = children
                 .iter()
@@ -222,18 +255,14 @@ pub fn get_children(
     Ok(entries)
 }
 
-/// Find a node by path (case-insensitive for Windows).
+/// Find a node by path (case-insensitive — NTFS 与默认 APFS 均不区分大小写).
 /// Avoids `to_ascii_lowercase()` allocations — uses `eq_ignore_ascii_case` directly.
 pub(crate) fn find_node<'a>(node: &'a TreeNode, target: &str) -> Option<&'a TreeNode> {
     if node.path.eq_ignore_ascii_case(target) {
         return Some(node);
     }
     // Only recurse into directories whose path is a true prefix of the target
-    if node.is_dir
-        && target.len() > node.path.len()
-        && target.as_bytes().get(node.path.len()) == Some(&b'\\')
-        && target[..node.path.len()].eq_ignore_ascii_case(&node.path)
-    {
+    if node.is_dir && is_strict_ancestor(&node.path, target) {
         for child in &node.children {
             if let Some(found) = find_node(child, target) {
                 return Some(found);
@@ -248,11 +277,7 @@ pub(crate) fn find_node_mut<'a>(node: &'a mut TreeNode, target: &str) -> Option<
     if node.path.eq_ignore_ascii_case(target) {
         return Some(node);
     }
-    if node.is_dir
-        && target.len() > node.path.len()
-        && target.as_bytes().get(node.path.len()) == Some(&b'\\')
-        && target[..node.path.len()].eq_ignore_ascii_case(&node.path)
-    {
+    if node.is_dir && is_strict_ancestor(&node.path, target) {
         for child in &mut node.children {
             if let Some(found) = find_node_mut(child, target) {
                 return Some(found);
@@ -278,12 +303,7 @@ pub(crate) fn adjust_ancestors(
     if node.path.eq_ignore_ascii_case(target) {
         return;
     }
-    let is_prefix = target.len() > node.path.len()
-        && target.as_bytes().get(node.path.len()) == Some(&b'\\')
-        && target
-            .get(..node.path.len())
-            .map_or(false, |p| p.eq_ignore_ascii_case(&node.path));
-    if !is_prefix {
+    if !is_strict_ancestor(&node.path, target) {
         return;
     }
     node.logical_size = (node.logical_size as i64 + delta_size).max(0) as u64;
@@ -295,5 +315,5 @@ pub(crate) fn adjust_ancestors(
 }
 
 pub(crate) fn normalize(p: &str) -> String {
-    p.replace('/', "\\").trim_end_matches('\\').to_string()
+    normalize_path(p)
 }

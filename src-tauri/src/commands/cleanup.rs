@@ -4,7 +4,13 @@ use std::io::Write;
 use std::path::Path;
 use tauri::Manager;
 
+#[cfg(windows)]
 const PROTECTED: &[&str] = &["Windows", "Program Files", "Program Files (x86)", "System Volume Information", "$Recycle.Bin"];
+
+/// macOS：受 SIP/系统签名保护或删了会废系统的根级目录（整个子树拒绝删除）。
+/// /Library、/Applications、/Users、/opt 留给用户自行清理（对应 Windows 的 AppData 不保护）。
+#[cfg(not(windows))]
+const PROTECTED: &[&str] = &["System", "usr", "bin", "sbin", "etc", "var", "private", "dev", "cores"];
 
 #[derive(Serialize)]
 pub struct ItemInfo {
@@ -73,6 +79,7 @@ fn delete_items_blocking(app: &tauri::AppHandle, paths: Vec<String>, to_trash: b
     }).collect()
 }
 
+#[cfg(windows)]
 pub(crate) fn is_protected(p: &str) -> bool {
     let norm = p.replace('/', "\\");
     // 盘符根（"D:" / "D:\"）或异常短路径一律保护；
@@ -93,6 +100,51 @@ pub(crate) fn is_protected(p: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_protected(p: &str) -> bool {
+    let norm = p.trim_end_matches('/');
+    // 相对路径或根目录 "/" 一律保护
+    let Some(rest) = norm.strip_prefix('/') else {
+        return true;
+    };
+    let comps: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+    if comps.is_empty() {
+        return true; // "/"
+    }
+    // 根级单组件（/Users、/Applications 本身）等价于盘符根，保护
+    if comps.len() == 1 {
+        return true;
+    }
+    // /Volumes/X 是其他卷的根，等价于盘符根
+    if comps[0].eq_ignore_ascii_case("Volumes") && comps.len() == 2 {
+        return true;
+    }
+    PROTECTED.iter().any(|prot| comps[0].eq_ignore_ascii_case(prot))
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::is_protected;
+
+    #[test]
+    fn protects_system_roots_and_volume_roots() {
+        assert!(is_protected("/"));
+        assert!(is_protected("/Users")); // 根级单组件等价盘符根
+        assert!(is_protected("/Volumes/SSD")); // 卷根
+        assert!(is_protected("/System/Library/CoreServices"));
+        assert!(is_protected("/usr/local/bin"));
+        assert!(is_protected("relative/path"));
+    }
+
+    #[test]
+    fn allows_user_data() {
+        assert!(!is_protected("/Users/me/Downloads/old.dmg"));
+        assert!(!is_protected("/Users/me/Library/Caches/Yarn"));
+        assert!(!is_protected("/Volumes/SSD/backup"));
+        assert!(!is_protected("/Applications/OldApp.app"));
+    }
 }
 
 pub(crate) fn dir_size(path: &Path) -> u64 {
