@@ -238,11 +238,14 @@ fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
     .collect()
 }
 
-/// macOS：扫描时跳过的特殊目录 —— 只跳会「重复计数」或「不属于本卷」的：
-/// - /System/Volumes/Data 是数据卷固件链接挂载，内容与 "/" 下的 /Users 等重复
-/// - /System/Volumes/Update/mnt1（及 SFR/mnt1）是密封系统快照的二次挂载，与 "/" 重复
-/// - /Volumes 是其他磁盘的挂载点（应单独扫描）；/dev 是设备文件系统
-/// VM（swap/休眠）、Preboot、Update 本体是真实占用的独立系统卷，照常纳入统计。
+/// macOS：扫描时跳过的特殊目录 —— 跳过「重复计数」「大小失真」「不属于本卷」的：
+/// - /System/Volumes/Data：数据卷固件链接挂载，内容与 "/" 下的 /Users 等重复
+/// - /System/Volumes/Update/mnt1（及 SFR/mnt1）：密封系统快照的二次挂载，与 "/" 重复
+/// - /System/Volumes/Preboot：引导卷内是 APFS 克隆（实测文件级 43G / 卷实占 17G，
+///   膨胀 2.5 倍），克隆无法经 stat 识别，且不可清理 —— 整卷跳过
+/// - Hardware/iSCPreboot/xarts：Apple Silicon 内部容器（disk1）的小系统卷，不属于启动盘
+/// - /Volumes：其他磁盘的挂载点（应单独扫描）；/dev：设备文件系统
+/// VM（swap/休眠）、Update 本体大小真实，照常纳入统计。
 #[cfg(target_os = "macos")]
 fn should_skip_dir(path: &str) -> bool {
     matches!(
@@ -250,6 +253,10 @@ fn should_skip_dir(path: &str) -> bool {
         "/System/Volumes/Data"
             | "/System/Volumes/Update/mnt1"
             | "/System/Volumes/Update/SFR/mnt1"
+            | "/System/Volumes/Preboot"
+            | "/System/Volumes/Hardware"
+            | "/System/Volumes/iSCPreboot"
+            | "/System/Volumes/xarts"
             | "/Volumes"
             | "/dev"
     )
