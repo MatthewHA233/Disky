@@ -67,3 +67,21 @@ export function pathChain(root: string, target: string): string[] {
   }
   return chain;
 }
+
+/** 路径所在的盘：Windows 取盘符（"C"），其他平台取卷名（启动卷为 "/"） */
+export function driveOf(p: string): string {
+  if (IS_WINDOWS) return /^[A-Za-z]:/.test(p) ? p[0].toUpperCase() : "?";
+  const m = /^\/Volumes\/([^/]+)/.exec(p);
+  return m ? m[1] : "/";
+}
+
+/** 盘的显示名：「C 盘」；macOS 启动卷叫「系统盘」 */
+export function driveLabel(drive: string): string {
+  if (IS_WINDOWS) return `${drive} 盘`;
+  return drive === "/" ? "系统盘" : drive;
+}
+
+/** 用户目录缩写成 ~，路径短一些（C:\Users\me\AppData → ~\AppData） */
+export function shortenHome(p: string): string {
+  return IS_WINDOWS ? p.replace(/^[A-Za-z]:\\Users\\[^\\]+/i, "~") : p.replace(/^\/Users\/[^/]+/, "~");
+}

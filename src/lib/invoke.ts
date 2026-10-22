@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ChildrenPage, DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, ChatSession, CliDetection, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage } from "../types";
+import type { ChildrenPage, DirEntry, DriveInfo, Footprint, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, ChatSession, CliDetection, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage, ArchiveModel, ArchiveBoxRow, ArchiveAiPlacement, ArchiveClassifyItem, ArchiveCategory, ArchiveCacheCheck, ArchiveCheckItem, ClaimKind, ArchiveAttributeResult, ArchiveMode, ArchiveNote, SnapshotInfo, LoadSnapshotResult } from "../types";
 
 export const listDrives = () => invoke<DriveInfo[]>("list_drives");
 
@@ -10,6 +10,8 @@ export const getChildren = (parentPath: string, topN: number) =>
 
 export const getChildrenPage = (parentPath: string, offset: number, limit: number) =>
   invoke<ChildrenPage>("get_children_page", { parentPath, offset, limit });
+
+export const classifyFootprints = () => invoke<Footprint[]>("classify_footprints");
 
 export const getItemsInfo = (paths: string[]) => invoke<ItemInfo[]>("get_items_info", { paths });
 
@@ -24,6 +26,13 @@ export const loadScan = (id: number) => invoke<LoadScanResult>("load_scan", { id
 export const deleteScan = (id: number) => invoke<void>("delete_scan", { id });
 
 export const listScans = () => invoke<ScanRecord[]>("list_scans");
+
+/** 各盘最近一次整盘扫描存下来的结果 */
+export const listSnapshots = () => invoke<SnapshotInfo[]>("list_snapshots");
+/** 打开某块盘存下来的扫描，当作当前的扫描结果 */
+export const loadSnapshot = (root: string) => invoke<LoadSnapshotResult>("load_snapshot", { root });
+/** 删除过东西以后，按内存里的树重存一遍 */
+export const saveSnapshot = () => invoke<void>("save_snapshot");
 
 export const compareScans = (idA: number, idB: number, root: string) =>
   invoke<DiffEntry[]>("compare_scans", { idA, idB, root });
@@ -111,3 +120,33 @@ export const setWatchPath = (path: string) => invoke<void>("set_watch_path", { p
 // macOS 完全磁盘访问权限（Windows 上 check 恒为 true，open 为 no-op）
 export const checkFullDiskAccess = () => invoke<boolean>("check_full_disk_access");
 export const openFullDiskAccessSettings = () => invoke<void>("open_full_disk_access_settings");
+
+// Archive
+export const getArchive = () => invoke<ArchiveModel>("get_archive");
+export const archivePlace = (keys: string[], boxId: string | null) =>
+  invoke<void>("archive_place", { keys, boxId });
+/** 指定某个位置属于哪个软件的哪种成分；appKey 为 null 表示不属于任何软件 */
+export const archiveAssign = (path: string, appKey: string | null, kind: ClaimKind) =>
+  invoke<void>("archive_assign", { path, appKey, kind });
+/** 撤掉指定的归属，回到内置规则的判断 */
+export const archiveUnassign = (path: string) => invoke<void>("archive_unassign", { path });
+/** 整理模式；还没走完新手引导时为 null */
+export const archiveMode = () => invoke<ArchiveMode | null>("archive_mode");
+export const archiveSetMode = (mode: ArchiveMode) => invoke<void>("archive_set_mode", { mode });
+/** 重新开始整理（先备份数据库），返回备份文件的位置 */
+export const archiveReset = () => invoke<string>("archive_reset");
+export const archiveNotes = () => invoke<ArchiveNote[]>("archive_notes");
+export const archiveDeleteNote = (id: number) => invoke<void>("archive_delete_note", { id });
+/** 用还没保存的设置试一次连接，返回 AI 的回复 */
+export const testAiSettings = (settings: AiSettings) => invoke<string>("test_ai_settings", { settings });
+/** 让 AI 用内置工具查这些文件夹属于哪个软件；进度通过 archive-agent 事件推送 */
+export const archiveAiAttribute = (paths: string[]) => invoke<ArchiveAttributeResult>("archive_ai_attribute", { paths });
+export const archiveCreateBox = (name: string, color: string, category: ArchiveCategory) =>
+  invoke<ArchiveBoxRow>("archive_create_box", { name, color, category });
+export const archiveRenameBox = (id: string, name: string) => invoke<void>("archive_rename_box", { id, name });
+export const archiveDeleteBox = (id: string) => invoke<void>("archive_delete_box", { id });
+export const archiveIcons = (sources: string[]) => invoke<(string | null)[]>("archive_icons", { sources });
+export const archiveForget = (items: [string, number][]) => invoke<void>("archive_forget", { items });
+export const archiveAiClassify = (items: ArchiveClassifyItem[], category: ArchiveCategory) =>
+  invoke<ArchiveAiPlacement[]>("archive_ai_classify", { items, category });
+export const archiveAiCheck = (items: ArchiveCheckItem[]) => invoke<ArchiveCacheCheck[]>("archive_ai_check", { items });
