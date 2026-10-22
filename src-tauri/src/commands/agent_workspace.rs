@@ -124,6 +124,25 @@ __CLEANUP_EXAMPLE__
 ## 安全意识
 对系统目录（__SAFETY_DIRS__）保持保守；
 对缓存、临时文件、旧安装包、构建产物可以积极建议清理。
+
+## 档案馆整理助手
+你同时是 Disky 档案馆的整理助手。**每轮先 Read `context/archive.md`**：那是档案馆现状（门类和箱子、各盘、
+还没整理的软件和文件夹、待核对的缓存、用户说过的话），每轮刷新，以它为准。
+
+__ARCHIVE_ROLE__
+
+你没有 record / place_item / create_box / remember 这些工具：用户确认过要做的事，写进
+**`memory/archive-actions.json`**（JSON 数组，一条一个动作，字段和工具参数一样，多一个 `tool`）：
+
+```json
+[{"tool":"place_item","key":"app:…","box_id":"game"},
+ {"tool":"record","path":"__PATH_EXAMPLE__","app_key":"app:…","kind":"data","confidence":0.9,"reason":"…"},
+ {"tool":"create_box","name":"学习资料","category":"personal"},
+ {"tool":"remember","note":"用户说……"}]
+```
+
+本轮结束时 Disky 执行这些动作，结果写在 `context/archive-actions-result.md`，下一轮能看到。
+要用新建箱子的 id 时，先建箱子，下一轮从 archive.md 里拿到 id 再放。
 "#;
 
 const DISK_CLEANUP_SKILL: &str = r#"---
@@ -362,6 +381,29 @@ pub fn build_user_data_summary(app: &tauri::AppHandle) -> String {
     out
 }
 
+/// 整理助手要做的事（Claude Code 写在 memory/ 下，本轮结束时由 Disky 执行）
+pub const ARCHIVE_ACTIONS: &str = "archive-actions.json";
+
+/// 档案馆现状写进 context/archive.md（拿不到现状时写一句说明，免得它读到上一次的旧内容）
+pub fn write_archive_context(dir: &std::path::Path, brief: Option<&str>) -> Result<(), String> {
+    let text = brief.unwrap_or("# 档案馆现状\n\n这一轮没能读出档案馆现状（可能还没扫描过任何盘）。\n");
+    std::fs::write(dir.join("context").join("archive.md"), text).map_err(|e| e.to_string())
+}
+
+/// 执行完整理助手的动作后，把结果写给下一轮看，并删掉动作文件
+pub fn take_archive_actions(dir: &std::path::Path) -> Option<String> {
+    let file = dir.join("memory").join(ARCHIVE_ACTIONS);
+    let text = std::fs::read_to_string(&file).ok()?;
+    let _ = std::fs::remove_file(&file);
+    Some(text)
+}
+
+pub fn write_archive_results(dir: &std::path::Path, results: &[String]) -> Result<(), String> {
+    let body: String = results.iter().map(|r| format!("- {r}\n")).collect();
+    std::fs::write(dir.join("context").join("archive-actions-result.md"), format!("# 上一轮动作的执行结果\n\n{body}"))
+        .map_err(|e| e.to_string())
+}
+
 /// 写出/刷新受管工作目录，返回其路径（作为 claude 子进程的 cwd）。
 /// `memory/` 是 AI 自己的跨会话备忘区，只创建不覆盖。
 pub fn prepare_workspace(
@@ -385,8 +427,10 @@ pub fn prepare_workspace(
     let _ = std::fs::remove_file(memory_dir.join("cleanup-plan.json"));
     let _ = std::fs::remove_file(memory_dir.join("cleanup-plan-draft.json"));
     let _ = std::fs::remove_file(dir.join("requests").join("cleanup-plan.json"));
+    let _ = std::fs::remove_file(memory_dir.join(ARCHIVE_ACTIONS));
 
-    std::fs::write(dir.join("CLAUDE.md"), render_platform(CLAUDE_MD)).map_err(|e| e.to_string())?;
+    let claude_md = render_platform(CLAUDE_MD).replace("__ARCHIVE_ROLE__", crate::commands::archive_chat::ROLE);
+    std::fs::write(dir.join("CLAUDE.md"), claude_md).map_err(|e| e.to_string())?;
     std::fs::write(skills_dir.join("SKILL.md"), render_platform(DISK_CLEANUP_SKILL))
         .map_err(|e| e.to_string())?;
     std::fs::write(context_dir.join("scan-summary.md"), scan_summary).map_err(|e| e.to_string())?;

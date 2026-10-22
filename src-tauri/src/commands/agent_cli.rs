@@ -864,6 +864,8 @@ pub async fn run_chat_cli(
     deep_summary: String,
     scan_tree: String,
     chat_session_id: i64,
+    // 档案馆现状和执行整理动作的工具（读不出来时为 None）
+    archive: Option<(String, crate::commands::archive_chat::ChatTools)>,
 ) -> Result<(), String> {
     // 每个聊天会话保有独立的 CLI resume session，互不串记忆
     let session_key = format!("chat:{}", chat_session_id);
@@ -904,6 +906,11 @@ pub async fn run_chat_cli(
         &user_data,
     )?;
     let workspace_str = workspace.display().to_string();
+    let (archive_brief, mut archive_tools) = match archive {
+        Some((brief, tools)) => (Some(brief), Some(tools)),
+        None => (None, None),
+    };
+    crate::commands::agent_workspace::write_archive_context(&workspace, archive_brief.as_deref())?;
 
     let mut resume = load_session_id(&app, &session_key);
     let new_session = uuid::Uuid::new_v4().to_string();
@@ -926,7 +933,7 @@ pub async fn run_chat_cli(
             )
         } else {
             format!(
-                "[当前磁盘扫描概览]\n{}\n\n更深层明细见 context/scan-summary.md 与 context/scan-tree.tsv（按 CLAUDE.md 的渐进式披露规则按需查看）。开始前先 Read memory/notes.md 恢复你的既有认知。\n\n{}",
+                "[当前磁盘扫描概览]\n{}\n\n更深层明细见 context/scan-summary.md 与 context/scan-tree.tsv（按 CLAUDE.md 的渐进式披露规则按需查看）。开始前先 Read memory/notes.md 恢复你的既有认知，再 Read context/archive.md 看档案馆现状。\n\n{}",
                 disk_context, message
             )
         };
@@ -1012,6 +1019,18 @@ pub async fn run_chat_cli(
     // agent 提交了清理计划 → 通知前端弹确认窗（确认后走回收站 + 记清理历史）
     if let Some(items) = take_cleanup_plan(&workspace) {
         let _ = app.emit("agent-cleanup-request", serde_json::json!({ "items": items }));
+    }
+
+    // 整理助手写下的动作：按同一套规矩执行，结果留给下一轮，档案馆重新读
+    // 读不出现状时没有执行的工具，动作文件留着（下一轮开始前会作废，不会误执行旧的）
+    if let Some(tools) = archive_tools.as_mut() {
+        if let Some(text) = crate::commands::agent_workspace::take_archive_actions(&workspace) {
+            let results = crate::commands::archive_chat::apply_cli_actions(tools, &text);
+            let _ = crate::commands::agent_workspace::write_archive_results(&workspace, &results);
+            if tools.changed {
+                let _ = app.emit("archive-changed", ());
+            }
+        }
     }
 
     let _ = app.emit(

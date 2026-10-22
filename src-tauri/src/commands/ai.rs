@@ -67,13 +67,6 @@ pub struct ChatSession {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ChatStreamEvent {
-    pub delta: String,
-    pub done: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeStreamEvent {
     pub delta: String,
     pub done: bool,
@@ -298,7 +291,7 @@ pub fn delete_chat_session(app: tauri::AppHandle, session_id: i64) -> Result<(),
     Ok(())
 }
 
-fn build_api_url(settings: &AiSettings) -> String {
+pub(crate) fn build_api_url(settings: &AiSettings) -> String {
     if settings.url_mode == "raw" {
         return settings.base_url.clone();
     }
@@ -310,7 +303,7 @@ fn build_api_url(settings: &AiSettings) -> String {
     }
 }
 
-fn build_http_client(settings: &AiSettings) -> Result<Client, String> {
+pub(crate) fn build_http_client(settings: &AiSettings) -> Result<Client, String> {
     let mut builder = Client::builder();
     let proxy = settings.proxy_url.trim();
     if !proxy.is_empty() {
@@ -320,7 +313,7 @@ fn build_http_client(settings: &AiSettings) -> Result<Client, String> {
     builder.build().map_err(|e| e.to_string())
 }
 
-fn apply_auth_headers(
+pub(crate) fn apply_auth_headers(
     builder: reqwest::RequestBuilder,
     settings: &AiSettings,
 ) -> reqwest::RequestBuilder {
@@ -403,305 +396,19 @@ pub async fn send_chat_message(
     if settings.provider == "claude-code" {
         let disk_context = build_disk_context(&scan_state);
         let (deep_summary, scan_tree) = build_cli_scan_context(&scan_state);
+        // 档案馆现状写进工作目录；读不出来也不耽误聊天
+        let archive = crate::commands::archive_chat::prepare(&app).await.ok();
         crate::commands::agent_cli::run_chat_cli(
-            app.clone(), message, settings.clone(), disk_context, deep_summary, scan_tree, session_id,
+            app.clone(), message, settings.clone(), disk_context, deep_summary, scan_tree, session_id, archive,
         )
         .await?;
         maybe_generate_title(&app, &settings, session_id).await;
         return Ok(());
     }
 
-    if settings.api_key.is_empty() {
-        return Err("Please configure your API key in AI settings.".into());
-    }
-
-    // Build disk context
+    // API 方式：侧栏就是档案馆的整理助手（开场交代现状、带工具、主动提问）
     let disk_context = build_disk_context(&scan_state);
-    let system_prompt = format!(
-        "You are Disky AI assistant, a helpful disk analysis assistant built into the Disky disk analyzer tool. \
-        You help users understand their disk usage, identify large files/folders, and suggest cleanup strategies.\n\n\
-        Current disk scan data:\n{}\n\n\
-        Guidelines:\n\
-        - Answer in the same language as the user's message.\n\
-        - Be concise and actionable.\n\
-        - When referencing paths or sizes, use the scan data provided above.\n\
-        - If no scan data is available, let the user know they should run a scan first.",
-        disk_context
-    );
-
-    // Save user message to DB
-    {
-        let conn = ensure_ai_db(&app)?;
-        conn.execute(
-            "INSERT INTO chat_messages (role, content, session_id) VALUES ('user', ?1, ?2)",
-            params![message, session_id],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    // Load recent history (last 20 messages of THIS session)
-    let history = {
-        let conn = ensure_ai_db(&app)?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT role, content FROM (
-                    SELECT role, content, id FROM chat_messages WHERE session_id = ?1 ORDER BY id DESC LIMIT 20
-                ) sub ORDER BY id ASC",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![session_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-    };
-
-    // Build messages array
-    let messages: Vec<serde_json::Value> = history
-        .iter()
-        .map(|(role, content)| {
-            serde_json::json!({
-                "role": role,
-                "content": content,
-            })
-        })
-        .collect();
-
-    // Build request URL
-    let url = build_api_url(&settings);
-
-    // Build request body
-    let body = if settings.api_type == "openai" {
-        let mut all_messages = vec![serde_json::json!({
-            "role": "system",
-            "content": system_prompt,
-        })];
-        all_messages.extend(messages);
-        serde_json::json!({
-            "model": settings.model_id,
-            "max_tokens": 4096,
-            "messages": all_messages,
-            "stream": true,
-        })
-    } else {
-        serde_json::json!({
-            "model": settings.model_id,
-            "max_tokens": 4096,
-            "system": system_prompt,
-            "messages": messages,
-            "stream": true,
-        })
-    };
-
-    // Send HTTP request
-    let client = build_http_client(&settings)?;
-    let response = apply_auth_headers(client.post(&url), &settings)
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        let error_msg = format!("API error ({}): {}", status, text);
-        let _ = app.emit(
-            "chat-stream",
-            ChatStreamEvent {
-                delta: String::new(),
-                done: true,
-                error: Some(error_msg.clone()),
-            },
-        );
-        return Err(error_msg);
-    }
-
-    // Stream SSE response
-    let mut stream = response.bytes_stream();
-    let mut full_reply = String::new();
-    let mut buffer = String::new();
-    let mut done_emitted = false;
-    let is_openai = settings.api_type == "openai";
-
-    'outer: while let Some(chunk) = stream.next().await {
-        let chunk = match chunk {
-            Ok(c) => c,
-            Err(e) => {
-                if !done_emitted {
-                    let _ = app.emit(
-                        "chat-stream",
-                        ChatStreamEvent {
-                            delta: String::new(),
-                            done: true,
-                            error: Some(format!("Stream error: {}", e)),
-                        },
-                    );
-                    done_emitted = true;
-                }
-                break;
-            }
-        };
-
-        let text = String::from_utf8_lossy(&chunk);
-        buffer.push_str(&text);
-
-        // Process complete SSE lines
-        while let Some(pos) = buffer.find('\n') {
-            let line = buffer[..pos].trim_end_matches('\r').to_string();
-            buffer = buffer[pos + 1..].to_string();
-
-            if !line.starts_with("data: ") {
-                continue;
-            }
-            let json_str = line[6..].trim();
-
-            // [DONE] — OpenAI / many compatible APIs use this to signal stream end
-            if json_str == "[DONE]" {
-                if !done_emitted {
-                    let _ = app.emit(
-                        "chat-stream",
-                        ChatStreamEvent {
-                            delta: String::new(),
-                            done: true,
-                            error: None,
-                        },
-                    );
-                    done_emitted = true;
-                }
-                break 'outer;
-            }
-
-            let parsed: serde_json::Value = match serde_json::from_str(json_str) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            // Top-level error object (works for both API types)
-            if let Some(err) = parsed["error"]["message"].as_str() {
-                if !done_emitted {
-                    let _ = app.emit(
-                        "chat-stream",
-                        ChatStreamEvent {
-                            delta: String::new(),
-                            done: true,
-                            error: Some(err.to_string()),
-                        },
-                    );
-                    done_emitted = true;
-                }
-                break 'outer;
-            }
-
-            if is_openai {
-                // OpenAI / compatible: choices[0].delta.content
-                if let Some(text) = parsed["choices"][0]["delta"]["content"].as_str() {
-                    if !text.is_empty() {
-                        full_reply.push_str(text);
-                        let _ = app.emit(
-                            "chat-stream",
-                            ChatStreamEvent {
-                                delta: text.to_string(),
-                                done: false,
-                                error: None,
-                            },
-                        );
-                    }
-                }
-                // finish_reason: JSON null means still streaming; any real value means done
-                let finish = &parsed["choices"][0]["finish_reason"];
-                if !finish.is_null() {
-                    if let Some(r) = finish.as_str() {
-                        // some APIs send the string "null" — treat that as still streaming
-                        if r != "null" && !done_emitted {
-                            let _ = app.emit(
-                                "chat-stream",
-                                ChatStreamEvent {
-                                    delta: String::new(),
-                                    done: true,
-                                    error: None,
-                                },
-                            );
-                            done_emitted = true;
-                        }
-                    }
-                }
-            } else {
-                // Anthropic SSE: content_block_delta / message_stop / error
-                let event_type = parsed["type"].as_str().unwrap_or("");
-                match event_type {
-                    "content_block_delta" => {
-                        if let Some(text) = parsed["delta"]["text"].as_str() {
-                            full_reply.push_str(text);
-                            let _ = app.emit(
-                                "chat-stream",
-                                ChatStreamEvent {
-                                    delta: text.to_string(),
-                                    done: false,
-                                    error: None,
-                                },
-                            );
-                        }
-                    }
-                    "message_stop" => {
-                        if !done_emitted {
-                            let _ = app.emit(
-                                "chat-stream",
-                                ChatStreamEvent {
-                                    delta: String::new(),
-                                    done: true,
-                                    error: None,
-                                },
-                            );
-                            done_emitted = true;
-                        }
-                    }
-                    "error" => {
-                        let err_msg = parsed["error"]["message"]
-                            .as_str()
-                            .unwrap_or("Unknown API error");
-                        if !done_emitted {
-                            let _ = app.emit(
-                                "chat-stream",
-                                ChatStreamEvent {
-                                    delta: String::new(),
-                                    done: true,
-                                    error: Some(err_msg.to_string()),
-                                },
-                            );
-                            done_emitted = true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    // Fallback: if stream ended without any done signal, emit one now
-    if !done_emitted {
-        let _ = app.emit(
-            "chat-stream",
-            ChatStreamEvent {
-                delta: String::new(),
-                done: true,
-                error: None,
-            },
-        );
-    }
-
-    // Save assistant reply to DB
-    if !full_reply.is_empty() {
-        let conn = ensure_ai_db(&app)?;
-        conn.execute(
-            "INSERT INTO chat_messages (role, content, session_id) VALUES ('assistant', ?1, ?2)",
-            params![full_reply, session_id],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
+    crate::commands::archive_chat::run_api_chat(&app, &settings, &message, session_id, &disk_context).await?;
     maybe_generate_title(&app, &settings, session_id).await;
     Ok(())
 }
@@ -849,6 +556,13 @@ async fn generate_title_api(settings: &AiSettings, prompt: &str) -> Option<Strin
         v["content"][0]["text"].as_str()
     };
     text.map(|s| s.to_string())
+}
+
+/// 用还没保存的设置试一次：能拿到回复就算连通
+#[tauri::command]
+pub async fn test_ai_settings(settings: AiSettings) -> Result<String, String> {
+    let reply = complete_once(&settings, "这是连接测试，只回复「连上了」三个字。", 20).await?;
+    Ok(reply.trim().chars().take(40).collect())
 }
 
 /// 一次性提问（非流式），按设置走 API 或 Claude Code，返回模型的文字回复
