@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertCircle } from "lucide-react";
 import { useScanSession } from "./hooks/useScanSession";
 import { useChat } from "./hooks/useChat";
 import { useAiAnalysis } from "./hooks/useAiAnalysis";
@@ -17,16 +18,24 @@ import { AnalyzeConfirmDialog } from "./components/AnalyzeConfirmDialog";
 import { ContextMenu } from "./components/ContextMenu";
 import { AnalyzeStreamViewer } from "./components/AnalyzeStreamViewer";
 import { FullDiskAccessDialog } from "./components/FullDiskAccessDialog";
-import { checkFullDiskAccess } from "./lib/invoke";
+import { checkFullDiskAccess, loadAiSettings, saveSnapshot } from "./lib/invoke";
 import { ScanProgressBar } from "./components/ScanProgressBar";
-import { getChildren, getItemsInfo, saveCleanupLog, removeScanNode } from "./lib/invoke";
+import { WelcomePanel } from "./components/WelcomePanel";
+import { ArchiveView } from "./components/archive/ArchiveView";
+import { Onboarding } from "./components/onboarding/Onboarding";
+import { useFootprints } from "./hooks/useFootprints";
+import { useArchive } from "./hooks/useArchive";
+import { getChildren, getItemsInfo, saveCleanupLog, removeScanNode, refreshScanNode } from "./lib/invoke";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useMemo } from "react";
 import { basename, normalizePath, parentPath, pathChain, isSameOrInside } from "./lib/path";
-import type { AiAnalysis, AnalyzePathInput, ContextMenuTarget } from "./types";
+import type { AiAnalysis, AnalyzePathInput, ArchiveMode, ContextMenuTarget } from "./types";
+
+/** 新手引导结束后替用户发的第一句，整理助手据此开场 */
+const ASSISTANT_KICKOFF = "我刚设置好 Disky。请先看一遍档案馆现状，然后从最值得问的地方开始问我。";
 
 type Dialog = "cleanup" | "history" | "ai-settings" | null;
-type ViewMode = "tree" | "tags";
+type ViewMode = "tree" | "tags" | "archive";
 
 /** Build the full ancestor chain from rootPath down to targetPath */
 function buildAncestry(targetPath: string, rootPath: string): string[] {
@@ -44,7 +53,7 @@ export default function App() {
   const [analyzeLogOpen, setAnalyzeLogOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuTarget | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [viewMode, setViewMode] = useState<ViewMode>("tree");
+  const [viewMode, setViewMode] = useState<ViewMode>("archive");
 
   // Confirm dialog state
   const [confirmDuplicates, setConfirmDuplicates] = useState<AiAnalysis[] | null>(null);
@@ -55,6 +64,14 @@ export default function App() {
 
   // AI 提交的清理计划（聊天里用户同意后 agent 写入 requests/，这里弹确认窗）
   const [aiCleanup, setAiCleanup] = useState<Map<string, number> | null>(null);
+  // 档案馆详情里勾选的缓存 / 残留；empty 里的只清空里面（临时文件夹）
+  const [archiveCleanup, setArchiveCleanup] = useState<{ items: Map<string, number>; empty: Set<string> } | null>(null);
+  // 这次清理删掉的位置，清理对话框关闭后同步到档案馆的各盘摘要
+  const deletedRef = useRef<[string, number][]>([]);
+
+  // 档案馆跨盘汇总：扫描完成、打开扫描记录后重新读取
+  const [archiveKey, setArchiveKey] = useState(0);
+  const archive = useArchive(archiveKey);
 
   // macOS：启动时检测完全磁盘访问权限，缺失则弹引导窗（Windows 恒为已授权）
   const [showFdaDialog, setShowFdaDialog] = useState(false);
@@ -88,14 +105,80 @@ export default function App() {
   const handleCleanupDone = useCallback((bytes: number, path: string, action: "delete" | "empty") => {
     setCleanedBytes((prev) => prev + bytes);
     scan.refreshDrives();
-    const drive = scan.selectedDrive ?? scan.rootPath ?? "";
+    // 档案馆里能删别的盘上的东西：记账记到路径所在的盘
+    const owner = scan.drives.find((d) => isSameOrInside(normalizePath(d.mount_point), path));
+    const drive = owner?.mount_point ?? scan.selectedDrive ?? scan.rootPath ?? "";
     if (drive) {
       const desc = aiAnalysis.analyses.get(path)?.description ?? "";
       saveCleanupLog(drive, path, action, bytes, scanSessionTs, desc).catch(() => {});
     }
-  }, [scan.selectedDrive, scan.rootPath, scan.refreshDrives, scanSessionTs, aiAnalysis.analyses]);
+  }, [scan.drives, scan.selectedDrive, scan.rootPath, scan.refreshDrives, scanSessionTs, aiAnalysis.analyses]);
+
+  // 清理对话框删掉一项：记账，并从内存树摘除节点（祖先大小随之回减，不用重扫）
+  const handleItemDeleted = useCallback(async (bytes: number, path: string, action: "delete" | "empty") => {
+    if (bytes > 0) handleCleanupDone(bytes, path, action);
+    deletedRef.current.push([path, bytes]);
+    // 节点不在树里（比如已被监听刷新移除、或在别的盘上）时没有可摘的，忽略即可；清空的文件夹还在，重新统计
+    if (action === "empty") await refreshScanNode(path).catch(() => {});
+    else await removeScanNode(path).catch(() => {});
+  }, [handleCleanupDone]);
+
+  // 清理对话框关闭：删掉的移出选择，刷新档案馆 / 目录 / 矩形图
+  const handleCleanupFinished = useCallback((removed: string[]) => {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      removed.forEach((p) => next.delete(p));
+      return next;
+    });
+    setDialog(null);
+    setAiCleanup(null);
+    setArchiveCleanup(null);
+    setRefreshKey((k) => k + 1);
+    scan.refreshDrives();
+    const deleted = deletedRef.current.splice(0);
+    archive.forget(deleted);
+    // 存下来的扫描也跟着更新，免得下次打开时删掉的东西又冒出来
+    if (deleted.length > 0) saveSnapshot().catch(() => {});
+  }, [scan.refreshDrives, archive.forget]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scanning = scan.status === "scanning";
+  // 档案馆要等扫描完成才能归类，扫描中统一显示实时目录
+  const view: ViewMode = scanning ? "tree" : viewMode;
+  const footprints = useFootprints(scan.rootPath, !scanning, refreshKey);
+  const hasArchive = (archive.model?.drives.length ?? 0) > 0;
+
+  // 扫描结束、换了扫描记录：各盘摘要可能更新了
+  const archiveSeen = useRef(false);
+  useEffect(() => {
+    if (!archiveSeen.current) {
+      archiveSeen.current = true;
+      return;
+    }
+    if (!scanning) setArchiveKey((k) => k + 1);
+  }, [scanning, scan.rootPath]);
+
+  // ---- 整理助手开场：新手引导结束、模板模式下点「让 AI 复查」 ----
+  const startAssistant = useCallback(() => {
+    setChatOpen(true);
+    chat.startWith(ASSISTANT_KICKOFF).catch(() => {});
+  }, [chat]);
+
+  // 模板模式要复查：还没接入 AI 就先打开 AI 设置
+  const reviewWithAi = useCallback(() => {
+    loadAiSettings()
+      .then(async (s) => {
+        if (s.provider !== "claude-code" && !s.api_key.trim()) return setDialog("ai-settings");
+        await archive.setMode("ai");
+        startAssistant();
+      })
+      .catch(() => setDialog("ai-settings"));
+  }, [archive, startAssistant]);
+
+  const finishOnboarding = useCallback(async (mode: ArchiveMode) => {
+    await archive.setMode(mode);
+    setViewMode("archive");
+    if (mode === "ai") startAssistant();
+  }, [archive, startAssistant]);
 
   const scanPct = useMemo(() => {
     if (!scanning || !scan.progress) return 0;
@@ -223,13 +306,12 @@ export default function App() {
     }
   }, [scan.liveChildren]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear selections, reset cleanedBytes, start new session, and exit tags view when a new scan starts
+  // Clear selections, reset cleanedBytes and start a new session when a new scan starts
   useEffect(() => {
     if (scanning) {
       setSelected(new Map());
       setCleanedBytes(0);
       setScanSessionTs(new Date().toISOString());
-      setViewMode("tree");
     }
   }, [scanning]);
 
@@ -326,8 +408,10 @@ export default function App() {
           onClearSelected={() => setSelected(new Map())}
           onToggleChat={() => setChatOpen((v) => !v)}
           chatOpen={chatOpen}
-          viewMode={viewMode}
-          onToggleViewMode={() => setViewMode((v) => (v === "tree" ? "tags" : "tree"))}
+          viewMode={view}
+          hasArchive={hasArchive}
+          onToggleViewMode={() => setViewMode((v) => (v === "tags" ? "archive" : "tags"))}
+          onSelectView={setViewMode}
           analyzing={aiAnalysis.analyzing}
           analyzeLogOpen={analyzeLogOpen}
           onToggleAnalyzeLog={() => setAnalyzeLogOpen((v) => !v)}
@@ -336,10 +420,29 @@ export default function App() {
         <ScanProgressBar pct={scanPct} visible={scanning} />
 
         {/* Main SplitPane Container */}
-        <div className="flex-1 flex flex-col min-h-0 relative px-4 pb-0">
+        <div className="flex-1 flex flex-col min-h-0 relative px-3 pb-2">
+          {view === "archive" && !(archive.model && !hasArchive && !scan.rootPath) ? (
+            <ArchiveView
+              archive={archive}
+              drives={scan.drives}
+              scanning={scanning}
+              onScanDrive={scan.scanDrive}
+              onCleanup={(items, empty) => setArchiveCleanup({ items, empty })}
+              onOpenAiSettings={() => setDialog("ai-settings")}
+              onStartAssistant={reviewWithAi}
+            />
+          ) : !scanning && !scan.rootPath ? (
+            <WelcomePanel
+              drives={scan.drives}
+              snapshots={scan.snapshots}
+              onScan={scan.scanDrive}
+              onOpen={(d) => { void scan.openSnapshot(d); }}
+              onHistory={() => setDialog("history")}
+            />
+          ) : (
           <SplitPane
             top={
-              viewMode === "tags" ? (
+              view === "tags" ? (
                 <TagBoard
                   tags={tagSystem.tags}
                   taggedPaths={filteredTaggedPaths}
@@ -402,17 +505,20 @@ export default function App() {
                 navPath={navPath}
                 onNavigate={handleNavigate}
                 onContextMenu={handleContextMenu}
+                footprints={footprints.items}
                 key={`map-${refreshKey}`}
               />
             }
           />
+          )}
         </div>
 
         <StatusBar scan={scan} />
 
         {aiAnalysis.error && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 bg-danger/90 text-textMain px-6 py-2 rounded-full shadow-lg font-mono text-sm border border-[#E74C3C]">
-            {aiAnalysis.error}
+          <div role="alert" className="absolute top-14 left-1/2 -translate-x-1/2 z-50 max-w-[70%] flex items-start gap-2 px-4 py-2.5 rounded-lg bg-card border border-slate text-[13px] shadow-[var(--fl-shadow)]">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-danger" />
+            <span className="break-words">{aiAnalysis.error}</span>
           </div>
         )}
       </div>
@@ -425,6 +531,22 @@ export default function App() {
         />
       )}
 
+      {/* 还没走完新手引导（第一次打开、重新开始整理之后） */}
+      {archive.mode === null && (
+        <Onboarding
+          drives={scan.drives}
+          scanned={archive.model?.drives ?? []}
+          scanning={scanning}
+          scanningDrive={scan.selectedDrive}
+          scanPct={scanPct}
+          liveChildren={scan.liveChildren}
+          progress={scan.progress}
+          onScanDrive={scan.scanDrive}
+          recognized={archive.model?.apps.length ?? 0}
+          onFinish={finishOnboarding}
+        />
+      )}
+
       {/* Dialogs */}
       {showFdaDialog && (
         <FullDiskAccessDialog onClose={() => setShowFdaDialog(false)} />
@@ -432,21 +554,26 @@ export default function App() {
       {dialog === "cleanup" && (
         <CleanupDialog
           selected={selected}
-          onDone={() => { setSelected(new Map()); setDialog(null); }}
+          onDone={handleCleanupFinished}
           onClose={() => setDialog(null)}
-          onCleanupDone={handleCleanupDone}
+          onCleanupDone={handleItemDeleted}
         />
       )}
       {aiCleanup && (
         <CleanupDialog
           selected={aiCleanup}
-          onDone={() => { setAiCleanup(null); handleDataChanged(); }}
+          onDone={handleCleanupFinished}
           onClose={() => setAiCleanup(null)}
-          onCleanupDone={(bytes, path, action) => {
-            handleCleanupDone(bytes, path, action);
-            // 从内存树摘除已删节点，界面即时一致
-            removeScanNode(path).catch(() => {});
-          }}
+          onCleanupDone={handleItemDeleted}
+        />
+      )}
+      {archiveCleanup && (
+        <CleanupDialog
+          selected={archiveCleanup.items}
+          emptyPaths={archiveCleanup.empty}
+          onDone={handleCleanupFinished}
+          onClose={() => setArchiveCleanup(null)}
+          onCleanupDone={handleItemDeleted}
         />
       )}
       {dialog === "history" && (
