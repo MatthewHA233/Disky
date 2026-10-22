@@ -14,7 +14,8 @@
       {
         "title": "Disky",
         "width": 1100,
-        "height": 750
+        "height": 750,
+        "maximized": true
       }
     ]
   },
