@@ -3,7 +3,8 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { UseChatReturn } from "../hooks/useChat";
 import type { ChatSegment } from "../types";
-import { Bot, Send, Trash2, Settings, Sparkles, Brain, Wrench, Check, X, Plus, MessagesSquare, RefreshCw } from "lucide-react";
+import { Send, Trash2, Settings, Brain, Wrench, Check, X, Plus, MessagesSquare, RefreshCw } from "lucide-react";
+import { AiIcon } from "./ui/AiIcon";
 import { cn } from "../lib/utils";
 import { IS_WINDOWS } from "../lib/path";
 
@@ -71,6 +72,21 @@ function linkifyChildren(children: ReactNode, onNavigate?: (p: string) => void):
   return walk(children);
 }
 
+const OPTIONS_BLOCK = /```options[^\n]*\n([\s\S]*?)```/;
+/** 还没写完的选项块（流式输出途中）：先从正文里藏起来，不当选项 */
+const OPEN_OPTIONS = /```options[\s\S]*$/;
+/** 行首的列表记号：「- 」「1. 」「1、」；「1.5 GB」这种不算 */
+const LIST_MARK = /^\s*(?:[-*•]\s+|\d+[.)]\s+|\d+、\s*)/;
+
+/** 把 AI 回复里的 options 代码块（一行一个选项）拿出来，正文里去掉 */
+export function splitOptions(content: string): { body: string; options: string[] } {
+  const m = OPTIONS_BLOCK.exec(content);
+  if (!m) return { body: content.replace(OPEN_OPTIONS, "").trim(), options: [] };
+  const lines = m[1].split("\n").map((l) => l.replace(LIST_MARK, "").trim()).filter(Boolean);
+  const options = [...new Set(lines)].slice(0, 6);
+  return { body: (content.slice(0, m.index) + content.slice(m.index + m[0].length)).trim(), options };
+}
+
 /** AI 回复的 markdown 渲染组件映射（含 GFM 表格），暗色样式 + 路径可点击 */
 function markdownComponents(onNavigate?: (p: string) => void): Components {
   const wrap = (children: ReactNode) => linkifyChildren(children, onNavigate);
@@ -98,18 +114,18 @@ function markdownComponents(onNavigate?: (p: string) => void): Components {
       <td className="px-3 py-1.5 align-top border-b border-slate/40">{wrap(children)}</td>
     ),
     pre: ({ children }) => (
-      <pre className="block w-full bg-fiber rounded-lg p-3 my-2 overflow-x-auto border border-slate text-xs font-mono custom-scrollbar">
+      <pre className="block w-full bg-fiber rounded-lg p-3 my-2 overflow-x-auto border border-slate text-xs font-code custom-scrollbar">
         {children}
       </pre>
     ),
     code: ({ children, className }) =>
       className ? (
         // 代码块内的 <code>（带语言 class），样式交给外层 pre
-        <code className="font-mono text-border">{children}</code>
+        <code className="font-code text-border">{children}</code>
       ) : (
         // break-words 而非 break-all：不影响表格列的固有宽度（避免列被压成一字一行），
         // 段落里超长路径仍会在溢出处折行
-        <code className="bg-fiber px-1 py-0.5 rounded font-mono text-[12px] text-photon/90 break-words">
+        <code className="bg-fiber px-1 py-0.5 rounded font-code text-[12px] text-photon/90 break-words">
           {wrap(children)}
         </code>
       ),
@@ -158,7 +174,7 @@ function SegmentList({
       {segments.map((seg, i) =>
         seg.type === "thinking" ? (
           <details key={i} className="bg-fiber/60 border border-slate/50 rounded-lg px-3 py-1.5 min-w-0">
-            <summary className="flex items-center gap-1.5 text-[11px] font-mono text-text-dim cursor-pointer select-none list-none">
+            <summary className="flex items-center gap-1.5 text-[11px] text-text-dim cursor-pointer select-none list-none">
               <Brain className="w-3 h-3 shrink-0" /> 思考过程
             </summary>
             <div className="mt-1.5 text-[11px] text-text-dim/80 italic whitespace-pre-wrap break-words leading-relaxed max-h-40 overflow-y-auto custom-scrollbar">
@@ -166,7 +182,7 @@ function SegmentList({
             </div>
           </details>
         ) : (
-          <div key={i} className="flex items-center gap-2 bg-fiber/60 border border-slate/50 rounded-lg px-3 py-1.5 text-[11px] font-mono min-w-0">
+          <div key={i} className="flex items-center gap-2 bg-fiber/60 border border-slate/50 rounded-lg px-3 py-1.5 text-[11px] min-w-0">
             <Wrench className="w-3 h-3 shrink-0 text-photon/70" />
             <span className="text-photon/90 shrink-0">{seg.name}</span>
             {(() => {
@@ -191,10 +207,10 @@ function SegmentList({
               seg.is_error ? (
                 <X className="w-3 h-3 shrink-0 text-danger" />
               ) : (
-                <Check className="w-3 h-3 shrink-0 text-emerald-400" />
+                <Check className="w-3 h-3 shrink-0 text-success" />
               )
             ) : streaming ? (
-              <span className="w-2 h-2 shrink-0 rounded-full bg-photon animate-pulse" />
+              <span className="w-2 h-2 shrink-0 rounded bg-photon animate-pulse" />
             ) : null}
           </div>
         )
@@ -212,13 +228,20 @@ function renderContent(text: string, onNavigate?: (p: string) => void) {
       const code = lines[0]?.match(/^[a-zA-Z]*$/) ? lines.slice(1).join("\n") : part;
       return (
         <pre key={i} className="block w-full bg-fiber rounded-lg p-3 my-2 overflow-x-auto border border-slate">
-          <code className="font-mono text-xs text-border">{code}</code>
+          <code className="font-code text-xs text-border">{code}</code>
         </pre>
       );
     }
     return linkifyPaths(part, i, onNavigate);
   });
 }
+
+/** 空会话时给出的几个起手问题 */
+const STARTERS = [
+  "接着帮我整理档案馆",
+  "还有哪些大文件夹没认出是谁的？",
+  "哪些东西可以放心删？",
+];
 
 export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
   const [input, setInput] = useState("");
@@ -274,14 +297,14 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
   };
 
   return (
-    <div className="w-[420px] flex-shrink-0 flex flex-col bg-[#0A0A12] border-l border-slate h-screen shadow-[-10px_0_30px_rgba(0,0,0,0.5)] z-40 relative">
+    <div className="w-[420px] flex-shrink-0 flex flex-col bg-abyss border-l border-slate h-screen z-40 relative">
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate/50 bg-abyss shrink-0 relative">
         <button
           className="flex items-center gap-2.5 min-w-0 group"
           onClick={() => setShowSessions((v) => !v)}
           title="切换会话"
         >
-          <Bot className="w-5 h-5 text-photon shrink-0" />
+          <AiIcon className="w-5 h-5 text-photon shrink-0" />
           <span className="font-semibold text-textMain tracking-wide truncate max-w-[200px] group-hover:text-photon transition-colors">
             {activeTitle}
           </span>
@@ -289,7 +312,7 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
         </button>
         <div className="flex items-center gap-1.5 shrink-0">
           <button
-            className="magnetic-btn p-2 rounded hover:bg-slate/50 text-text-dim hover:text-photon transition-colors"
+            className="p-2 rounded hover:bg-hover text-text-dim hover:text-photon transition-colors"
             onClick={() => { chat.newSession(); setShowSessions(false); }}
             disabled={chat.streaming}
             title="新对话"
@@ -298,10 +321,10 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
           </button>
           <button
             className={cn(
-              "magnetic-btn p-2 rounded transition-colors",
+              "p-2 rounded transition-colors",
               confirmDeleteId != null && confirmDeleteId === chat.activeSessionId
                 ? "bg-danger/20 text-danger animate-pulse"
-                : "hover:bg-slate/50 text-text-dim hover:text-danger"
+                : "hover:bg-hover text-text-dim hover:text-danger"
             )}
             onClick={() => chat.activeSessionId != null && requestDelete(chat.activeSessionId)}
             disabled={chat.streaming}
@@ -314,7 +337,7 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
             <Trash2 className="w-4 h-4" />
           </button>
           <button
-            className="magnetic-btn p-2 rounded hover:bg-slate/50 text-text-dim hover:text-textMain transition-colors"
+            className="p-2 rounded hover:bg-hover text-text-dim hover:text-textMain transition-colors"
             onClick={onOpenSettings}
             title="AI 设置"
           >
@@ -325,8 +348,8 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
         {showSessions && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowSessions(false)} />
-            <div className="absolute left-4 top-full mt-1 w-[340px] max-h-[60vh] overflow-y-auto custom-scrollbar bg-abyss border border-slate rounded-xl shadow-2xl z-50 py-1.5">
-              <div className="px-3 py-1.5 text-[10px] font-mono text-text-dim uppercase tracking-widest">会话历史</div>
+            <div className="absolute left-4 top-full mt-1 w-[340px] max-h-[60vh] overflow-y-auto custom-scrollbar bg-abyss border border-slate rounded-lg shadow-[var(--fl-shadow)] z-50 py-1.5">
+              <div className="px-3 py-1.5 text-[10px] text-text-dim">会话历史</div>
               {chat.sessions.length === 0 && (
                 <div className="px-3 py-2 text-xs text-text-dim/60">暂无会话</div>
               )}
@@ -335,7 +358,7 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
                   key={s.id}
                   className={cn(
                     "group flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors",
-                    s.id === chat.activeSessionId ? "bg-photon/10" : "hover:bg-[#FFFFFF]/5"
+                    s.id === chat.activeSessionId ? "bg-photon/10" : "hover:bg-hover"
                   )}
                   onClick={() => { chat.switchSession(s.id); setShowSessions(false); }}
                 >
@@ -351,7 +374,7 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
                           "p-1 rounded shrink-0 transition-all",
                           regen
                             ? "opacity-100 text-photon cursor-default"
-                            : "opacity-0 group-hover:opacity-100 hover:bg-slate/50 text-text-dim hover:text-photon"
+                            : "opacity-0 group-hover:opacity-100 hover:bg-hover text-text-dim hover:text-photon"
                         )}
                         onClick={(e) => { e.stopPropagation(); if (!regen) chat.regenerateTitle(s.id); }}
                         disabled={regen}
@@ -363,7 +386,7 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
                   })()}
                   {confirmDeleteId === s.id ? (
                     <button
-                      className="px-1.5 py-0.5 rounded bg-danger/20 text-danger text-[10px] font-mono shrink-0 animate-pulse"
+                      className="px-1.5 py-0.5 rounded bg-danger/20 text-danger text-[10px] shrink-0 animate-pulse"
                       onClick={(e) => { e.stopPropagation(); requestDelete(s.id); }}
                       title="再点一次确认删除"
                     >
@@ -371,7 +394,7 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
                     </button>
                   ) : (
                     <button
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate/50 text-text-dim hover:text-danger transition-all shrink-0"
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-hover text-text-dim hover:text-danger transition-all shrink-0"
                       onClick={(e) => { e.stopPropagation(); requestDelete(s.id); }}
                       title="删除会话"
                     >
@@ -387,64 +410,97 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar p-6 flex flex-col gap-6">
         {chat.messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-text-dim font-mono text-sm opacity-50">
-            <Sparkles className="w-8 h-8 mb-4 opacity-50" />
-            等待输入...
+          <div className="flex flex-col justify-center h-full">
+            <AiIcon className="w-6 h-6 mb-3 text-ai" />
+            <div className="text-sm font-semibold">整理助手</div>
+            <div className="mt-1 text-xs text-text-dim">它知道档案馆里还有哪些没整理，会翻看文件夹、问你拿不准的地方，你点头了才动手。</div>
+            <div className="mt-4 flex flex-col items-start gap-2">
+              {STARTERS.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  className="px-3 py-1.5 rounded border border-slate bg-card text-left text-[13px] hover:bg-hover transition-colors disabled:opacity-40"
+                  disabled={chat.streaming}
+                  onClick={() => chat.send(q)}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        {chat.messages.map((msg, i) => (
-          <div key={i} className={cn(
-            "flex flex-col max-w-[90%] min-w-0 animate-in fade-in slide-in-from-bottom-2 duration-300",
-            msg.role === "user" ? "self-end items-end" : "self-start items-start"
-          )}>
-            <div className={cn(
-              "text-[10px] font-mono mb-1.5 uppercase tracking-widest",
-              msg.role === "user" ? "text-photon/70" : "text-text-dim"
+        {chat.messages.map((msg, i) => {
+          // 整理助手把选项写在 options 代码块里：从正文里拿出来，最后一条回复下面显示成按钮
+          const { body, options } = msg.role === "assistant" ? splitOptions(msg.content) : { body: msg.content, options: [] };
+          const latest = i === chat.messages.length - 1 && !chat.streaming;
+          return (
+            <div key={i} className={cn(
+              "flex flex-col max-w-[90%] min-w-0 animate-in fade-in slide-in-from-bottom-2 duration-300",
+              msg.role === "user" ? "self-end items-end" : "self-start items-start"
             )}>
-              {msg.role === "user" ? "我" : "AI"}
-            </div>
-
-            <div className={cn(
-              "px-4 py-3 rounded-2xl text-[13px] shadow-sm max-w-full min-w-0 overflow-hidden",
-              msg.role === "user"
-                ? "bg-photon text-fiber rounded-tr-sm font-medium"
-                : "bg-abyss text-textMain border border-slate rounded-tl-sm w-full"
-            )}>
-              {msg.role === "assistant" && (
-                <SegmentList
-                  segments={msg.id === -1 ? chat.liveSegments : parseMetaSegments(msg.meta)}
-                  streaming={msg.id === -1 && chat.streaming}
-                  onNavigate={onNavigatePath}
-                />
-              )}
-              {msg.role === "assistant" ? (
-                <div className="break-words">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents(onNavigatePath)}>
-                    {msg.content}
-                  </ReactMarkdown>
-                  {msg.id === -1 && chat.streaming && msg.content === "" && (
-                    <span className="inline-flex gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-photon animate-bounce" style={{ animationDelay: "0ms" }} />
-                      <span className="w-1.5 h-1.5 rounded-full bg-photon animate-bounce" style={{ animationDelay: "150ms" }} />
-                      <span className="w-1.5 h-1.5 rounded-full bg-photon animate-bounce" style={{ animationDelay: "300ms" }} />
-                    </span>
-                  )}
+              <div className={cn(
+                "text-[10px] mb-1.5",
+                msg.role === "user" ? "text-photon/70" : "text-text-dim"
+              )}>
+                {msg.role === "user" ? "我" : "AI"}
+              </div>
+  
+              <div className={cn(
+                "px-4 py-3 rounded-lg text-[13px] max-w-full min-w-0 overflow-hidden",
+                msg.role === "user"
+                  ? "bg-photon text-on-accent rounded-tr-sm font-medium"
+                  : "bg-abyss text-textMain border border-slate rounded-tl-sm w-full"
+              )}>
+                {msg.role === "assistant" && (
+                  <SegmentList
+                    segments={msg.id === -1 ? chat.liveSegments : parseMetaSegments(msg.meta)}
+                    streaming={msg.id === -1 && chat.streaming}
+                    onNavigate={onNavigatePath}
+                  />
+                )}
+                {msg.role === "assistant" ? (
+                  <div className="break-words">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents(onNavigatePath)}>
+                      {body}
+                    </ReactMarkdown>
+                    {msg.id === -1 && chat.streaming && msg.content === "" && (
+                      <span className="inline-flex gap-1">
+                        <span className="w-1.5 h-1.5 rounded bg-photon animate-bounce" style={{ animationDelay: "0ms" }} />
+                        <span className="w-1.5 h-1.5 rounded bg-photon animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <span className="w-1.5 h-1.5 rounded bg-photon animate-bounce" style={{ animationDelay: "300ms" }} />
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="inline">{renderContent(msg.content)}</div>
+                )}
+                {msg.id === -1 && chat.streaming && chat.status && (
+                  <div className="mt-1.5 text-[10px] text-text-dim/70 animate-pulse">
+                    {chat.status}
+                  </div>
+                )}
+              </div>
+              {latest && options.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="回答">
+                  {options.map((o) => (
+                    <button
+                      key={o}
+                      type="button"
+                      className="px-3 py-1.5 rounded border border-slate bg-card text-left text-[13px] hover:bg-hover hover:border-photon transition-colors"
+                      onClick={() => chat.send(o)}
+                    >
+                      {o}
+                    </button>
+                  ))}
                 </div>
-              ) : (
-                <div className="inline">{renderContent(msg.content)}</div>
-              )}
-              {msg.id === -1 && chat.streaming && chat.status && (
-                <div className="mt-1.5 text-[10px] font-mono text-text-dim/70 animate-pulse">
-                  {chat.status}
-                </div>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {chat.error && (
-          <div className="self-center bg-danger/10 border border-danger/30 text-danger px-4 py-2 rounded-lg text-xs font-mono w-full text-center">
+          <div className="self-center bg-danger/10 border border-danger/30 text-danger px-4 py-2 rounded-lg text-xs w-full text-center">
             {chat.error}
           </div>
         )}
@@ -453,11 +509,11 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
       </div>
 
       <div className="p-4 bg-abyss border-t border-slate/50 flex-shrink-0">
-        <div className="relative flex items-end bg-fiber border border-slate focus-within:border-photon rounded-2xl transition-colors shadow-inner">
+        <div className="relative flex items-end bg-fiber border border-slate focus-within:border-photon rounded-lg transition-colors">
           <textarea
             ref={textareaRef}
             className="w-full bg-transparent text-textMain text-[13px] px-4 py-3 focus:outline-none resize-none custom-scrollbar min-h-[44px] max-h-[120px]"
-            placeholder="输入消息..."
+            placeholder="问点什么，Enter 发送，Shift+Enter 换行"
             value={input}
             onChange={(e) => handleInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -465,7 +521,7 @@ export function ChatPanel({ chat, onOpenSettings, onNavigatePath }: Props) {
             disabled={chat.streaming}
           />
           <button
-            className="magnetic-btn shrink-0 w-10 h-10 m-1 flex items-center justify-center rounded-xl bg-slate hover:bg-photon text-textMain hover:text-fiber disabled:opacity-30 disabled:hover:bg-slate disabled:hover:text-textMain disabled:hover:scale-100 transition-all"
+            className="shrink-0 w-10 h-10 m-1 flex items-center justify-center rounded bg-slate hover:bg-photon text-textMain hover:text-on-accent disabled:opacity-30 disabled:hover:bg-slate disabled:hover:text-textMain disabled:hover:scale-100 transition-all"
             onClick={handleSend}
             disabled={chat.streaming || !input.trim()}
           >

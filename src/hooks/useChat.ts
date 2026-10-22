@@ -21,6 +21,8 @@ export interface UseChatReturn {
   /** CLI 状态行，如「已连接 Claude Code (sonnet)」 */
   status: string | null;
   send: (text: string) => void;
+  /** 开一个新会话并发出第一句 */
+  startWith: (text: string) => Promise<void>;
   switchSession: (id: number) => void;
   newSession: () => void;
   deleteSession: (id: number) => void;
@@ -43,6 +45,9 @@ export function useChat(): UseChatReturn {
   // 当前流式归属的会话——避免在 A 会话流式时切到 B 把增量写错地方
   const activeRef = useRef<number | null>(null);
   activeRef.current = activeSessionId;
+  // 回复进行中要开新对话（新手引导结束、「让 AI 复查」）：先记着，这一轮说完再开
+  const pendingStart = useRef<string | null>(null);
+  const startRef = useRef<((text: string) => Promise<void>) | null>(null);
 
   const loadMessages = useCallback((sessionId: number) => {
     listChatMessages(sessionId).then(setMessages).catch(() => setMessages([]));
@@ -95,6 +100,12 @@ export function useChat(): UseChatReturn {
         setError(errMsg);
         setStreaming(false);
         setStatus(null);
+        // 这一轮出错结束了，记着要开的新对话照样开（多半也会报同样的错，至少不是悄悄没了）
+        const queued = pendingStart.current;
+        if (queued) {
+          pendingStart.current = null;
+          setTimeout(() => { void startRef.current?.(queued); }, 0);
+        }
         return;
       }
 
@@ -155,6 +166,12 @@ export function useChat(): UseChatReturn {
         setLiveSegments([]);
         const sid = activeRef.current;
         if (sid != null) loadMessages(sid);
+        const queued = pendingStart.current;
+        if (queued) {
+          pendingStart.current = null;
+          // 等 setStreaming(false) 生效后再开，不然会被当成还在回复
+          setTimeout(() => { void startRef.current?.(queued); }, 0);
+        }
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -167,10 +184,8 @@ export function useChat(): UseChatReturn {
     };
   }, [loadMessages]);
 
-  const send = useCallback(
-    (text: string) => {
-      if (streaming || !text.trim() || activeSessionId == null) return;
-
+  const sendTo = useCallback(
+    (sessionId: number, text: string) => {
       setError(null);
       setStreaming(true);
       setStatus(null);
@@ -192,14 +207,39 @@ export function useChat(): UseChatReturn {
       };
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
-      sendChatMessage(text, activeSessionId).catch((err) => {
+      sendChatMessage(text, sessionId).catch((err) => {
         setError(String(err));
         setStreaming(false);
         setStatus(null);
       });
     },
-    [streaming, activeSessionId]
+    []
   );
+
+  const send = useCallback(
+    (text: string) => {
+      if (streaming || !text.trim() || activeSessionId == null) return;
+      sendTo(activeSessionId, text);
+    },
+    [streaming, activeSessionId, sendTo]
+  );
+
+  /** 开一个新会话并发出第一句（新手引导结束时让整理助手开场） */
+  const startWith = useCallback(
+    async (text: string) => {
+      if (streaming) {
+        pendingStart.current = text;
+        return;
+      }
+      const s = await createChatSession();
+      setSessions((prev) => [s, ...prev]);
+      setActiveSessionId(s.id);
+      setMessages([]);
+      sendTo(s.id, text);
+    },
+    [streaming, sendTo]
+  );
+  startRef.current = startWith;
 
   const switchSession = useCallback(
     (id: number) => {
@@ -276,6 +316,7 @@ export function useChat(): UseChatReturn {
     liveSegments,
     status,
     send,
+    startWith,
     switchSession,
     newSession,
     deleteSession,
