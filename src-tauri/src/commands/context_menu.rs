@@ -4,14 +4,12 @@ use std::fs;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
 use tauri::State;
 
 use super::cleanup::{is_protected, dir_size};
-use super::scan::{adjust_ancestors, find_node, find_node_mut, normalize, ScanState};
+use super::scan::{normalize, ScanState};
 use crate::scanner::walk::{scan_tree, ScanProgress};
-use crate::scanner::{DirEntry, SEP};
+use crate::scanner::DirEntry;
 
 /// AppleScript 字符串字面量转义（双引号与反斜杠）
 #[cfg(target_os = "macos")]
@@ -380,8 +378,10 @@ pub async fn refresh_scan_node(
     {
         let guard = state.0.lock().map_err(|e| e.to_string())?;
         let tree = guard.as_ref().ok_or("No scan data. Run a scan first.")?;
-        let node = find_node(tree, &norm).ok_or_else(|| format!("Path not found: {norm}"))?;
-        if !node.is_dir {
+        let id = tree
+            .find(&norm)
+            .ok_or_else(|| format!("Path not found: {norm}"))?;
+        if !tree.node(id).is_dir() {
             return Err("Cannot refresh a file".into());
         }
     }
@@ -389,39 +389,23 @@ pub async fn refresh_scan_node(
     // Scan outside the lock (potentially long-running)
     let norm_clone = norm.clone();
     let scanned = tokio::task::spawn_blocking(move || {
-        let progress = Arc::new(ScanProgress {
-            files_scanned: AtomicU64::new(0),
-            dirs_scanned: AtomicU64::new(0),
-            total_size: AtomicU64::new(0),
-        });
-        scan_tree(&norm_clone, &progress)
+        scan_tree(&norm_clone, &ScanProgress::default())
     })
     .await
     .map_err(|e| format!("Scan thread error: {e}"))?;
 
-    // Update the tree in-place
+    // 嫁接新子树，并把差量同步传播给所有祖先（否则上层大小停留在旧值）
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     let tree = guard.as_mut().ok_or("No scan data")?;
-    let node = find_node_mut(tree, &norm).ok_or("Path not found after rescan")?;
+    let id = tree.find(&norm).ok_or("Path not found after rescan")?;
+    // 扫描期间该路径可能已被同名文件替换（例如祖先刚刷新过）
+    if !tree.replace_children(id, scanned) {
+        return Err("Cannot refresh a file".into());
+    }
 
-    // 记录差量，刷新后同步传播给所有祖先目录（否则上层大小停留在旧值）
-    let delta_size = scanned.logical_size as i64 - node.logical_size as i64;
-    let delta_files = scanned.files as i64 - node.files as i64;
-    let delta_dirs = scanned.subdirs as i64 - node.subdirs as i64;
-
-    node.children = scanned.children;
-    node.logical_size = scanned.logical_size;
-    node.files = scanned.files;
-    node.subdirs = scanned.subdirs;
-
-    adjust_ancestors(tree, &norm, delta_size, delta_files, delta_dirs);
-
-    // Return updated children
-    let tree_ref = guard.as_ref().ok_or("No scan data")?;
-    let node = find_node(tree_ref, &norm).ok_or("Path not found")?;
-    let mut entries: Vec<DirEntry> = node.children.iter().map(|c| c.to_dir_entry()).collect();
-    entries.sort_by(|a, b| b.logical_size.cmp(&a.logical_size));
-    Ok(entries)
+    // 替换可能触发整理、下标失效，按路径重新定位后返回最新子项
+    let id = tree.find(&norm).ok_or("Path not found")?;
+    Ok(tree.child_entries(id, 0, usize::MAX).1)
 }
 
 // ---------------------------------------------------------------------------
@@ -433,30 +417,13 @@ pub async fn refresh_scan_node(
 #[tauri::command]
 pub fn remove_scan_node(path: String, state: State<'_, ScanState>) -> Result<(), String> {
     let norm = normalize(&path);
-    let parent_path = match norm.rfind(SEP) {
-        Some(i) => normalize(&norm[..i]),
-        None => return Err("Cannot remove root".into()),
-    };
-
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     let tree = guard.as_mut().ok_or("No scan data")?;
-    let parent = find_node_mut(tree, &parent_path)
-        .ok_or_else(|| format!("Parent not found: {parent_path}"))?;
-    let idx = parent
-        .children
-        .iter()
-        .position(|c| normalize(&c.path).eq_ignore_ascii_case(&norm))
+    let id = tree
+        .find(&norm)
         .ok_or_else(|| format!("Node not found: {norm}"))?;
-    let removed = parent.children.remove(idx);
-
-    let (delta_files, delta_dirs) = if removed.is_dir {
-        (-(removed.files as i64), -(removed.subdirs as i64) - 1)
-    } else {
-        (-1, 0)
-    };
-    let delta_size = -(removed.logical_size as i64);
-
-    // 父节点也是 norm 的真祖先，adjust_ancestors 会一并处理
-    adjust_ancestors(tree, &norm, delta_size, delta_files, delta_dirs);
+    if !tree.remove(id) {
+        return Err("Cannot remove root".into());
+    }
     Ok(())
 }

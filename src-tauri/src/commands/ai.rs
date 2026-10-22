@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
 use crate::commands::scan::ScanState;
+use crate::scanner::ROOT;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiSettings {
@@ -342,29 +343,29 @@ fn build_disk_context(scan_state: &State<'_, ScanState>) -> String {
         None => return "No scan data available. Please run a disk scan first.".into(),
     };
 
+    let root = tree.node(ROOT);
     let mut lines = Vec::new();
     lines.push(format!(
         "Current scan root: {}\nTotal size: {} bytes ({:.2} GB)\nFiles: {}, Directories: {}",
-        tree.path,
-        tree.logical_size,
-        tree.logical_size as f64 / 1_073_741_824.0,
-        tree.files,
-        tree.subdirs,
+        tree.root_path(),
+        root.size(),
+        root.size() as f64 / 1_073_741_824.0,
+        root.files(),
+        root.subdirs(),
     ));
 
-    let mut children: Vec<_> = tree.children.iter().collect();
-    children.sort_by(|a, b| b.logical_size.cmp(&a.logical_size));
-    children.truncate(20);
+    let children: Vec<_> = tree.children_by_size(ROOT).into_iter().take(20).collect();
 
     if !children.is_empty() {
         lines.push("\nTop children by size:".into());
-        for child in &children {
-            let kind = if child.is_dir { "DIR" } else { "FILE" };
+        for &child in &children {
+            let node = tree.node(child);
+            let kind = if node.is_dir() { "DIR" } else { "FILE" };
             lines.push(format!(
                 "  [{kind}] {} — {:.2} GB ({} bytes)",
-                child.name,
-                child.logical_size as f64 / 1_073_741_824.0,
-                child.logical_size,
+                tree.name(child),
+                node.size() as f64 / 1_073_741_824.0,
+                node.size(),
             ));
         }
     }

@@ -1,10 +1,11 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::Path;
 use tauri::{Manager, State};
 
 use crate::commands::scan::ScanState;
-use crate::scanner::{DirEntry, TreeNode};
+use crate::scanner::{join_path, DirEntry, NewChild, NodeId, ScanTree, Visit, ROOT};
 
 // ---------------------------------------------------------------------------
 // Public response types
@@ -37,11 +38,11 @@ pub struct LoadScanResult {
 }
 
 // ---------------------------------------------------------------------------
-// Binary-serializable mirror of TreeNode (TreeNode itself uses #[serde(skip)]
-// on `children`, so we need a separate struct for full serialization).
+// 旧版存档格式（v1）：嵌套结构的 bincode。新存档改用 ScanTree::encode，
+// 这里只保留读取，以便加载/对比升级前保存的历史记录。
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct StorableNode {
     name: String,
     path: String,
@@ -53,33 +54,43 @@ struct StorableNode {
 }
 
 impl StorableNode {
-    fn from_tree(node: &TreeNode) -> Self {
-        StorableNode {
-            name: node.name.clone(),
-            path: node.path.clone(),
-            logical_size: node.logical_size,
-            files: node.files,
-            subdirs: node.subdirs,
-            is_dir: node.is_dir,
-            children: node.children.iter().map(StorableNode::from_tree).collect(),
+    /// 按 BFS 转成紧凑扫描树（每个目录的子项连续追加）。
+    fn into_scan_tree(self) -> ScanTree {
+        let mut tree = ScanTree::new(&self.path);
+        tree.set_totals(ROOT, self.logical_size, self.files, self.subdirs);
+        let mut queue = VecDeque::from([(ROOT, self)]);
+        while let Some((id, node)) = queue.pop_front() {
+            let first = tree.push_children(
+                id,
+                node.children.iter().map(|c| NewChild {
+                    name: &c.name,
+                    size: c.logical_size,
+                    is_dir: c.is_dir,
+                }),
+            );
+            for (i, child) in node.children.into_iter().enumerate() {
+                if child.is_dir {
+                    let cid = first + i as NodeId;
+                    tree.set_totals(cid, child.logical_size, child.files, child.subdirs);
+                    queue.push_back((cid, child));
+                }
+            }
         }
-    }
-
-    fn into_tree(self) -> TreeNode {
-        TreeNode {
-            name: self.name,
-            path: self.path,
-            logical_size: self.logical_size,
-            files: self.files,
-            subdirs: self.subdirs,
-            is_dir: self.is_dir,
-            children: self.children.into_iter().map(StorableNode::into_tree).collect(),
-        }
+        tree.shrink_to_fit();
+        tree
     }
 }
 
-fn count_nodes(node: &StorableNode) -> i64 {
-    1 + node.children.iter().map(count_nodes).sum::<i64>()
+/// 读取存档文件：新格式直接解码，旧格式 bincode 反序列化后转换。
+fn read_tree_file(path: &Path) -> Result<ScanTree, String> {
+    let blob = std::fs::read(path).map_err(|e| format!("读取文件失败: {e}"))?;
+    if ScanTree::is_encoded(&blob) {
+        return ScanTree::decode(&blob);
+    }
+    let legacy: StorableNode =
+        bincode::deserialize(&blob).map_err(|e| format!("反序列化失败: {e}"))?;
+    drop(blob);
+    Ok(legacy.into_scan_tree())
 }
 
 // ---------------------------------------------------------------------------
@@ -141,18 +152,17 @@ pub async fn save_scan(
     cleaned_bytes: i64,
     scan_state: State<'_, ScanState>,
 ) -> Result<i64, String> {
-    // Convert tree while holding the lock (pure CPU, fast)
-    let storable = {
-        let guard = scan_state.0.lock().map_err(|e| e.to_string())?;
-        let tree = guard.as_ref().ok_or("没有扫描数据，请先执行扫描。")?;
-        StorableNode::from_tree(tree)
+    // 持锁编码（只是顺序写出几个数组，很快），不再整树克隆。
+    // 有刷新/删除留下的垃圾节点时先原地整理，避免「树 + 整理副本 + blob」三份同时在内存
+    let (blob, count) = {
+        let mut guard = scan_state.0.lock().map_err(|e| e.to_string())?;
+        let tree = guard.as_mut().ok_or("没有扫描数据，请先执行扫描。")?;
+        tree.compact();
+        (tree.encode(), tree.node_count() as i64)
     };
 
     // Heavy I/O in a background thread so the UI stays responsive
     tokio::task::spawn_blocking(move || {
-        let count = count_nodes(&storable);
-        let blob = bincode::serialize(&storable).map_err(|e| e.to_string())?;
-
         let dir = data_dir(&app)?;
         let conn = ensure_db(&app)?;
 
@@ -184,7 +194,7 @@ pub async fn load_scan(
     scan_state: State<'_, ScanState>,
 ) -> Result<LoadScanResult, String> {
     let app_clone = app.clone();
-    let (drive, tree) = tokio::task::spawn_blocking(move || -> Result<(String, TreeNode), String> {
+    let (drive, tree) = tokio::task::spawn_blocking(move || -> Result<(String, ScanTree), String> {
         let conn = ensure_db(&app_clone)?;
         let (drive, tree_file): (String, String) = conn
             .query_row(
@@ -199,20 +209,14 @@ pub async fn load_scan(
         }
 
         let dir = data_dir(&app_clone)?;
-        let file_path = dir.join(&tree_file);
-        let blob = std::fs::read(&file_path)
-            .map_err(|e| format!("读取文件失败: {e}"))?;
-        let storable: StorableNode = bincode::deserialize(&blob)
-            .map_err(|e| format!("反序列化失败: {e}"))?;
-        Ok((drive, storable.into_tree()))
+        let tree = read_tree_file(&dir.join(&tree_file))?;
+        Ok((drive, tree))
     })
     .await
     .map_err(|e| e.to_string())??;
 
-    let mut children: Vec<DirEntry> = tree.children.iter().map(|c| c.to_dir_entry()).collect();
-    children.sort_by(|a, b| b.logical_size.cmp(&a.logical_size));
-
-    let root_path = tree.path.clone();
+    let (_, children) = tree.child_entries(ROOT, 0, usize::MAX);
+    let root_path = tree.root_path().to_string();
     *scan_state.0.lock().map_err(|e| e.to_string())? = Some(tree);
 
     Ok(LoadScanResult { drive, root_path, children })
@@ -290,14 +294,8 @@ pub async fn compare_scans(
 
         if !file_a.is_empty() && !file_b.is_empty() {
             let dir = data_dir(&app_clone)?;
-            let blob_a = std::fs::read(dir.join(&file_a))
-                .map_err(|e| format!("读取文件失败: {e}"))?;
-            let blob_b = std::fs::read(dir.join(&file_b))
-                .map_err(|e| format!("读取文件失败: {e}"))?;
-            let tree_a: StorableNode = bincode::deserialize(&blob_a)
-                .map_err(|e| format!("反序列化失败: {e}"))?;
-            let tree_b: StorableNode = bincode::deserialize(&blob_b)
-                .map_err(|e| format!("反序列化失败: {e}"))?;
+            let tree_a = read_tree_file(&dir.join(&file_a))?;
+            let tree_b = read_tree_file(&dir.join(&file_b))?;
             return Ok(compare_trees(&tree_a, &tree_b, &norm));
         }
 
@@ -317,23 +315,27 @@ fn tree_file_for(conn: &Connection, id: i64) -> Result<String, String> {
     .map_err(|e| e.to_string())
 }
 
-fn compare_trees(tree_a: &StorableNode, tree_b: &StorableNode, root: &str) -> Vec<DiffEntry> {
-    fn flatten_dirs(node: &StorableNode, prefix: &str, map: &mut HashMap<String, (String, i64)>) {
-        if !node.is_dir { return; }
-        let np = node.path.to_ascii_lowercase();
-        let pp = prefix.to_ascii_lowercase();
-        if np.starts_with(&pp) && np != pp {
-            map.insert(node.path.clone(), (node.name.clone(), node.logical_size as i64));
+/// root 之下（不含 root 自身）的全部目录：路径 → (名字, 大小)。
+fn dirs_under(tree: &ScanTree, root: &str) -> HashMap<String, (String, i64)> {
+    let mut map = HashMap::new();
+    let Some(start) = tree.find(root) else {
+        return map;
+    };
+    tree.walk(start, |id, parent| {
+        let node = tree.node(id);
+        if !node.is_dir() {
+            return Visit::Skip;
         }
-        for child in &node.children {
-            flatten_dirs(child, prefix, map);
-        }
-    }
+        let name = tree.name(id);
+        map.insert(join_path(parent, name), (name.to_string(), node.size() as i64));
+        Visit::Descend
+    });
+    map
+}
 
-    let mut map_a: HashMap<String, (String, i64)> = HashMap::new();
-    let mut map_b: HashMap<String, (String, i64)> = HashMap::new();
-    flatten_dirs(tree_a, root, &mut map_a);
-    flatten_dirs(tree_b, root, &mut map_b);
+fn compare_trees(tree_a: &ScanTree, tree_b: &ScanTree, root: &str) -> Vec<DiffEntry> {
+    let map_a = dirs_under(tree_a, root);
+    let map_b = dirs_under(tree_b, root);
 
     let all_paths: HashSet<&String> = map_a.keys().chain(map_b.keys()).collect();
     let mut diffs = Vec::new();

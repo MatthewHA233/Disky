@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 use crate::commands::ai::ensure_ai_db;
-use crate::scanner::TreeNode;
+use crate::scanner::{join_path, NodeId, ScanTree, Visit, ROOT};
 
 // ---------------------------------------------------------------------------
 // 提示词：共享模板 + 平台差异词表。
@@ -206,67 +206,69 @@ fn fmt_size(bytes: u64) -> String {
 
 /// 多层目录摘要：第 1 层取前 15、第 2 层前 8、第 3 层前 5，小目录截断，
 /// 控制在几百行内 —— 比 prompt 里的概览深，又远小于完整树。
-pub fn build_deep_scan_summary(tree: &TreeNode) -> String {
+pub fn build_deep_scan_summary(tree: &ScanTree) -> String {
+    let root = tree.node(ROOT);
     let mut lines = Vec::new();
     lines.push(format!(
         "# 扫描摘要\n\n根: {}\n总大小: {}（文件 {} 个 / 目录 {} 个）\n",
-        tree.path,
-        fmt_size(tree.logical_size),
-        tree.files,
-        tree.subdirs
+        tree.root_path(),
+        fmt_size(root.size()),
+        root.files(),
+        root.subdirs()
     ));
-    walk_node(tree, 0, &mut lines);
+    walk_node(tree, ROOT, 0, &mut lines);
     lines.join("\n")
 }
 
-fn walk_node(node: &TreeNode, depth: usize, lines: &mut Vec<String>) {
+fn walk_node(tree: &ScanTree, id: NodeId, depth: usize, lines: &mut Vec<String>) {
     const TOP_PER_DEPTH: [usize; 3] = [15, 8, 5];
     const MIN_SIZE_PER_DEPTH: [u64; 3] = [10_485_760, 104_857_600, 524_288_000]; // 10MB/100MB/500MB
     if depth >= TOP_PER_DEPTH.len() || lines.len() > 400 {
         return;
     }
-    let mut children: Vec<&TreeNode> = node.children.iter().collect();
-    children.sort_by(|a, b| b.logical_size.cmp(&a.logical_size));
-    for child in children.into_iter().take(TOP_PER_DEPTH[depth]) {
-        if child.logical_size < MIN_SIZE_PER_DEPTH[depth] {
+    for child in tree.children_by_size(id).into_iter().take(TOP_PER_DEPTH[depth]) {
+        let node = tree.node(child);
+        if node.size() < MIN_SIZE_PER_DEPTH[depth] {
             break;
         }
         let indent = "  ".repeat(depth);
-        let kind = if child.is_dir { "" } else { " [文件]" };
+        let kind = if node.is_dir() { "" } else { " [文件]" };
         lines.push(format!(
             "{}- {}{} — {}",
             indent,
-            child.name,
+            tree.name(child),
             kind,
-            fmt_size(child.logical_size)
+            fmt_size(node.size())
         ));
-        if child.is_dir {
-            walk_node(child, depth + 1, lines);
+        if node.is_dir() {
+            walk_node(tree, child, depth + 1, lines);
         }
     }
 }
 
 /// 接近全量的扫描树 dump（TSV：字节数<TAB>路径），AI 用 Grep 在其中导航子树，
 /// 等价于用户在左侧 DirectoryTree 里逐层浏览。目录 ≥10MB、文件 ≥50MB，上限 2 万行。
-pub fn build_scan_tree_dump(tree: &TreeNode) -> String {
+pub fn build_scan_tree_dump(tree: &ScanTree) -> String {
     const MIN_DIR: u64 = 10_485_760; // 10MB
     const MIN_FILE: u64 = 52_428_800; // 50MB
     const MAX_LINES: usize = 20_000;
-    let mut lines = vec![format!("{}\t{}", tree.logical_size, tree.path)];
-    let mut stack: Vec<&TreeNode> = tree.children.iter().collect();
-    while let Some(node) = stack.pop() {
+    let mut lines = vec![format!("{}\t{}", tree.node(ROOT).size(), tree.root_path())];
+    let mut truncated = false;
+    tree.walk(ROOT, |id, parent| {
         if lines.len() >= MAX_LINES {
-            lines.push("# （已截断：超过 2 万行）".into());
-            break;
+            truncated = true;
+            return Visit::Stop;
         }
-        let min = if node.is_dir { MIN_DIR } else { MIN_FILE };
-        if node.logical_size < min {
-            continue;
+        let node = tree.node(id);
+        let min = if node.is_dir() { MIN_DIR } else { MIN_FILE };
+        if node.size() < min {
+            return Visit::Skip;
         }
-        lines.push(format!("{}\t{}", node.logical_size, node.path));
-        if node.is_dir {
-            stack.extend(node.children.iter());
-        }
+        lines.push(format!("{}\t{}", node.size(), join_path(parent, tree.name(id))));
+        Visit::Descend
+    });
+    if truncated {
+        lines.push("# （已截断：超过 2 万行）".into());
     }
     lines.join("\n")
 }

@@ -1,9 +1,11 @@
 #[cfg(windows)]
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use super::{join_path, normalize_path, path_file_name, TreeNode};
+use rayon::prelude::*;
+
+use super::{join_path, normalize_path, DirEntry, NewChild, NodeId, ScanTree, ROOT};
 
 // ---------------------------------------------------------------------------
 // Win32 API bindings
@@ -76,6 +78,7 @@ mod win32 {
 // Progress tracking (lockless via atomics)
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 pub struct ScanProgress {
     pub files_scanned: AtomicU64,
     pub dirs_scanned: AtomicU64,
@@ -276,113 +279,141 @@ fn should_skip_dir(_path: &str) -> bool {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Recursively scan a directory tree using batch OS enumeration + rayon parallelism.
-pub fn scan_tree(root: &str, progress: &Arc<ScanProgress>) -> TreeNode {
+/// 递归扫描一个目录，返回以它为根的独立扫描树（刷新节点、监听器增量刷新用）。
+pub fn scan_tree(root: &str, progress: &ScanProgress) -> ScanTree {
     let norm = normalize_path(root);
-    let name = path_file_name(&norm);
-
-    scan_dir(&norm, &name, progress)
+    let tree = Mutex::new(ScanTree::new(&norm));
+    scan_into(&tree, ROOT, &norm, progress);
+    into_tree(tree)
 }
 
-/// Parallel recursive directory scanner.
-fn scan_dir(dir_path: &str, dir_name: &str, progress: &Arc<ScanProgress>) -> TreeNode {
-    let raw = enumerate_dir(dir_path);
+/// 整盘扫描：先列出根目录的直接子项并立即回调一次快照（子目录大小为 0），
+/// 再并行深扫每个顶层目录，每完成一个回调一次最新快照，供前端渐进显示。
+pub fn scan_tree_progressive<F>(root: &str, progress: &ScanProgress, on_snapshot: F) -> ScanTree
+where
+    F: Fn(Vec<DirEntry>) + Sync,
+{
+    let norm = normalize_path(root);
+    let tree = Mutex::new(ScanTree::new(&norm));
 
-    let mut file_entries = Vec::new();
-    let mut dir_entries = Vec::new();
+    let (files, subdirs) = expand_dir(&tree, ROOT, &norm, progress);
+    on_snapshot(top_level_snapshot(&tree));
 
-    for entry in raw {
-        if entry.is_dir {
-            if !should_skip_dir(&join_path(dir_path, &entry.name)) {
-                dir_entries.push(entry);
-            }
-        } else {
-            file_entries.push(entry);
-        }
-    }
+    let sub_totals: Vec<Totals> = subdirs
+        .par_iter()
+        .map(|(id, path)| {
+            let totals = scan_into(&tree, *id, path, progress);
+            on_snapshot(top_level_snapshot(&tree));
+            totals
+        })
+        .collect();
 
-    // --- files ---------------------------------------------------------------
-    let mut total_size: u64 = 0;
-    let file_count = file_entries.len() as u64;
-    let mut children: Vec<TreeNode> = Vec::with_capacity(file_entries.len() + dir_entries.len());
+    finish_dir(&tree, ROOT, files, &sub_totals, progress);
+    into_tree(tree)
+}
 
-    for f in &file_entries {
-        total_size += f.size;
-        children.push(TreeNode {
-            name: f.name.clone(),
-            path: join_path(dir_path, &f.name),
-            logical_size: f.size,
-            files: 0,
-            subdirs: 0,
-            is_dir: false,
-            children: Vec::new(),
-        });
-    }
+// ---------------------------------------------------------------------------
+// Parallel recursive scan into a shared arena
+//
+// 每个目录只加两次锁：列完子项后一次性追加（子项在 arena 中连续），
+// 子目录全部扫完后回填自身聚合值。临界区都是微秒级，rayon 并行几乎不受影响。
+// ---------------------------------------------------------------------------
 
-    // Batch-update atomic counters for all files in this directory at once
-    progress.files_scanned.fetch_add(file_count, Ordering::Relaxed);
-    progress.total_size.fetch_add(total_size, Ordering::Relaxed);
+/// 一个目录扫描完成后的聚合值。
+#[derive(Clone, Copy, Default)]
+struct Totals {
+    size: u64,
+    files: u64,
+    subdirs: u64,
+}
 
-    // --- subdirectories (parallel when >= 2) ---------------------------------
-    let dir_results: Vec<TreeNode> = if dir_entries.len() >= 2 {
-        use rayon::prelude::*;
-        dir_entries
+fn lock(tree: &Mutex<ScanTree>) -> MutexGuard<'_, ScanTree> {
+    tree.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn into_tree(tree: Mutex<ScanTree>) -> ScanTree {
+    let mut tree = tree.into_inner().unwrap_or_else(PoisonError::into_inner);
+    tree.shrink_to_fit();
+    tree
+}
+
+fn top_level_snapshot(tree: &Mutex<ScanTree>) -> Vec<DirEntry> {
+    lock(tree).child_entries(ROOT, 0, usize::MAX).1
+}
+
+/// 深扫 `id` 对应的目录：写入全部后代并回填该目录的聚合值。
+fn scan_into(tree: &Mutex<ScanTree>, id: NodeId, dir_path: &str, progress: &ScanProgress) -> Totals {
+    let (files, subdirs) = expand_dir(tree, id, dir_path, progress);
+
+    let sub_totals: Vec<Totals> = if subdirs.len() >= 2 {
+        subdirs
             .par_iter()
-            .map(|d| {
-                let child_path = join_path(dir_path, &d.name);
-                scan_dir(&child_path, &d.name, progress)
-            })
+            .map(|(cid, path)| scan_into(tree, *cid, path, progress))
             .collect()
     } else {
-        dir_entries
+        subdirs
             .iter()
-            .map(|d| {
-                let child_path = join_path(dir_path, &d.name);
-                scan_dir(&child_path, &d.name, progress)
-            })
+            .map(|(cid, path)| scan_into(tree, *cid, path, progress))
             .collect()
     };
 
-    let mut total_subdirs: u64 = 0;
-    let mut deep_files: u64 = 0;
-    for child in dir_results {
-        total_size += child.logical_size;
-        deep_files += child.files;
-        total_subdirs += 1 + child.subdirs;
-        children.push(child);
-    }
-
-    progress.dirs_scanned.fetch_add(1, Ordering::Relaxed);
-
-    // Sort children by size descending
-    children.sort_unstable_by(|a, b| b.logical_size.cmp(&a.logical_size));
-
-    TreeNode {
-        name: dir_name.to_string(),
-        path: dir_path.to_string(),
-        logical_size: total_size,
-        files: file_count + deep_files,
-        subdirs: total_subdirs,
-        is_dir: true,
-        children,
-    }
+    finish_dir(tree, id, files, &sub_totals, progress)
 }
 
-/// Non-recursive scan: immediate children only (Phase 1 quick preview).
-pub fn shallow_scan(dir_path: &str) -> Vec<TreeNode> {
-    let norm = normalize_path(dir_path);
-    let raw = enumerate_dir(&norm);
+/// 列出目录的直接子项并连续写入树（子目录大小暂为 0），
+/// 返回文件部分的合计与待深扫的子目录 (下标, 路径)。
+fn expand_dir(
+    tree: &Mutex<ScanTree>,
+    id: NodeId,
+    dir_path: &str,
+    progress: &ScanProgress,
+) -> (Totals, Vec<(NodeId, String)>) {
+    let raw: Vec<RawEntry> = enumerate_dir(dir_path)
+        .into_iter()
+        .filter(|e| !(e.is_dir && should_skip_dir(&join_path(dir_path, &e.name))))
+        .collect();
 
-    raw.into_iter()
-        .filter(|e| !(e.is_dir && should_skip_dir(&join_path(&norm, &e.name))))
-        .map(|e| TreeNode {
-            path: join_path(&norm, &e.name),
-            name: e.name,
-            logical_size: e.size,
-            files: 0,
-            subdirs: 0,
+    let files = raw.iter().filter(|e| !e.is_dir).fold(Totals::default(), |acc, e| Totals {
+        size: acc.size + e.size,
+        files: acc.files + 1,
+        subdirs: 0,
+    });
+    // Batch-update atomic counters for all files in this directory at once
+    progress.files_scanned.fetch_add(files.files, Ordering::Relaxed);
+    progress.total_size.fetch_add(files.size, Ordering::Relaxed);
+
+    let first = lock(tree).push_children(
+        id,
+        raw.iter().map(|e| NewChild {
+            name: &e.name,
+            size: e.size,
             is_dir: e.is_dir,
-            children: Vec::new(),
-        })
-        .collect()
+        }),
+    );
+
+    let subdirs = raw
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.is_dir)
+        .map(|(i, e)| (first + i as NodeId, join_path(dir_path, &e.name)))
+        .collect();
+    (files, subdirs)
+}
+
+/// 汇总文件合计与各子目录结果，回填到 `id`。
+fn finish_dir(
+    tree: &Mutex<ScanTree>,
+    id: NodeId,
+    files: Totals,
+    sub_totals: &[Totals],
+    progress: &ScanProgress,
+) -> Totals {
+    let totals = sub_totals.iter().fold(files, |acc, s| Totals {
+        size: acc.size + s.size,
+        files: acc.files + s.files,
+        subdirs: acc.subdirs + 1 + s.subdirs,
+    });
+    lock(tree).set_totals(id, totals.size, totals.files, totals.subdirs);
+    progress.dirs_scanned.fetch_add(1, Ordering::Relaxed);
+    totals
 }

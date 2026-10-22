@@ -75,9 +75,8 @@ pub async fn start_watch(
 
     // Spawn the combined debounce + path-switch + refresh task
     tokio::spawn(async move {
-        use crate::commands::scan::{find_node_mut, ScanState};
+        use crate::commands::scan::ScanState;
         use crate::scanner::walk::{scan_tree, ScanProgress};
-        use std::sync::atomic::AtomicU64;
         use tauri::{Emitter, Manager};
 
         let debounce = Duration::from_millis(800);
@@ -107,34 +106,25 @@ pub async fn start_watch(
                     let nav = watched_dir.lock().unwrap().clone();
                     if nav.is_empty() { continue; }
 
-                    let nav_clone = nav.clone();
-                    let scanned = tokio::task::spawn_blocking(move || {
-                        let progress = Arc::new(ScanProgress {
-                            files_scanned: AtomicU64::new(0),
-                            dirs_scanned: AtomicU64::new(0),
-                            total_size: AtomicU64::new(0),
-                        });
-                        scan_tree(&nav_clone, &progress)
+                    // 重扫 + 嫁接都放在阻塞线程：嫁接可能触发整理，不占用 tokio 工作线程
+                    let app_bg = app.clone();
+                    let entries = tokio::task::spawn_blocking(move || {
+                        let scanned = scan_tree(&nav, &ScanProgress::default());
+                        let scan_state = app_bg.state::<ScanState>();
+                        let mut guard = scan_state.0.lock().ok()?;
+                        let tree = guard.as_mut()?;
+                        // 嫁接新子树（同时把差量传播给祖先），再按路径重新定位取最新子项
+                        let id = tree.find(&nav)?;
+                        if !tree.replace_children(id, scanned) {
+                            return None;
+                        }
+                        let id = tree.find(&nav)?;
+                        Some(tree.child_entries(id, 0, usize::MAX).1)
                     })
                     .await;
 
-                    let Ok(scanned) = scanned else { continue };
-
-                    let scan_state = app.state::<ScanState>();
-                    let mut guard = scan_state.0.lock().unwrap();
-                    if let Some(tree) = guard.as_mut() {
-                        if let Some(node) = find_node_mut(tree, &nav) {
-                            node.children = scanned.children;
-                            node.logical_size = scanned.logical_size;
-                            node.files = scanned.files;
-                            node.subdirs = scanned.subdirs;
-
-                            let mut entries: Vec<_> =
-                                node.children.iter().map(|c| c.to_dir_entry()).collect();
-                            entries.sort_by(|a, b| b.logical_size.cmp(&a.logical_size));
-                            drop(guard);
-                            let _ = app.emit("live-update", entries);
-                        }
+                    if let Ok(Some(entries)) = entries {
+                        let _ = app.emit("live-update", entries);
                     }
                 }
             }

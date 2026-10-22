@@ -14,6 +14,7 @@ pub fn run() {
             commands::scan::list_drives,
             commands::scan::scan_disk,
             commands::scan::get_children,
+            commands::scan::get_children_page,
             commands::cleanup::get_items_info,
             commands::cleanup::delete_items,
             commands::history::save_scan,

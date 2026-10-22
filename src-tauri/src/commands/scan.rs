@@ -1,12 +1,12 @@
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::Disks;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::scanner::walk::{scan_tree, shallow_scan, ScanProgress};
-use crate::scanner::{is_strict_ancestor, normalize_path, path_file_name, DirEntry, TreeNode};
+use crate::scanner::walk::{scan_tree_progressive, ScanProgress};
+use crate::scanner::{normalize_path, DirEntry, ScanTree, ROOT};
 
 #[derive(Serialize)]
 pub struct DriveInfo {
@@ -30,7 +30,19 @@ struct ScanTreeEvent {
 }
 
 /// Holds the in-memory scan tree.
-pub struct ScanState(pub Mutex<Option<TreeNode>>);
+pub struct ScanState(pub Mutex<Option<ScanTree>>);
+
+/// 单页子项上限：虚拟列表按需翻页，单次 IPC 不必传整个超大目录。
+const MAX_PAGE_SIZE: usize = 5000;
+
+#[derive(Serialize)]
+pub struct ChildrenPage {
+    /// 子项总数（含未返回的）
+    total: usize,
+    /// 父目录自身大小（前端算占比用，分页时不必凑齐全部子项再求和）
+    parent_size: u64,
+    entries: Vec<DirEntry>,
+}
 
 /// macOS：DMG 安装镜像会挂载成 /Volumes 下的只读卷，不是可清理的磁盘。
 /// 用 statfs 的 MNT_RDONLY 标志识别并过滤。
@@ -87,11 +99,7 @@ pub async fn scan_disk(
     path: String,
     state: State<'_, ScanState>,
 ) -> Result<u64, String> {
-    let progress = Arc::new(ScanProgress {
-        files_scanned: AtomicU64::new(0),
-        dirs_scanned: AtomicU64::new(0),
-        total_size: AtomicU64::new(0),
-    });
+    let progress = Arc::new(ScanProgress::default());
 
     let norm = normalize_path(&path);
 
@@ -125,83 +133,16 @@ pub async fn scan_disk(
         let progress = progress.clone();
         let app_clone = app.clone();
         tokio::task::spawn_blocking(move || {
-            // Phase 1: Shallow scan — immediate children only (dirs at size=0)
-            let children = shallow_scan(&norm);
-            let mut snapshot: Vec<DirEntry> = children.iter().map(|c| c.to_dir_entry()).collect();
-            snapshot.sort_unstable_by(|a, b| b.logical_size.cmp(&a.logical_size));
-            let _ = app_clone.emit(
-                "scan-tree",
-                ScanTreeEvent {
-                    children: snapshot,
-                    scanning: true,
-                    current_dir: String::new(),
-                },
-            );
-
-            // Collect top-level directory indices for deep scanning
-            let dir_indices: Vec<(usize, String)> = children
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| c.is_dir)
-                .map(|(i, c)| (i, c.path.clone()))
-                .collect();
-
-            // Phase 2: Parallel deep scan with progressive UI updates.
-            // Each top-level dir completes → lock, update, emit snapshot → unlock.
-            let children_shared = Arc::new(Mutex::new(children));
-
-            {
-                use rayon::prelude::*;
-                dir_indices.par_iter().for_each(|(idx, dir_path)| {
-                    let scanned = scan_tree(dir_path, &progress);
-
-                    // Short lock: update slot + clone sorted snapshot, then release
-                    let snapshot = {
-                        let mut guard = children_shared.lock().unwrap();
-                        guard[*idx] = scanned;
-                        let mut s: Vec<DirEntry> =
-                            guard.iter().map(|c| c.to_dir_entry()).collect();
-                        s.sort_unstable_by(|a, b| b.logical_size.cmp(&a.logical_size));
-                        s
-                    };
-
-                    let _ = app_clone.emit(
-                        "scan-tree",
-                        ScanTreeEvent {
-                            children: snapshot,
-                            scanning: true,
-                            current_dir: String::new(),
-                        },
-                    );
-                });
-            }
-
-            // All parallel work done — sole owner, unwrap safely
-            let mut children = Arc::try_unwrap(children_shared)
-                .expect("sole owner after par_iter")
-                .into_inner()
-                .unwrap();
-
-            children.sort_unstable_by(|a, b| b.logical_size.cmp(&a.logical_size));
-
-            let root_name = path_file_name(&norm);
-            let total_size: u64 = children.iter().map(|c| c.logical_size).sum();
-            let total_files: u64 = children
-                .iter()
-                .map(|c| if c.is_dir { c.files } else { 1 })
-                .sum();
-            let total_subdirs: u64 = children.iter().filter(|c| c.is_dir).count() as u64
-                + children.iter().map(|c| c.subdirs).sum::<u64>();
-
-            TreeNode {
-                name: root_name,
-                path: norm,
-                logical_size: total_size,
-                files: total_files,
-                subdirs: total_subdirs,
-                is_dir: true,
-                children,
-            }
+            scan_tree_progressive(&norm, &progress, |children| {
+                let _ = app_clone.emit(
+                    "scan-tree",
+                    ScanTreeEvent {
+                        children,
+                        scanning: true,
+                        current_dir: String::new(),
+                    },
+                );
+            })
         })
         .await
         .map_err(|e| format!("scan thread error: {e}"))?
@@ -222,7 +163,7 @@ pub async fn scan_disk(
     );
 
     // Emit final tree
-    let snapshot: Vec<DirEntry> = tree.children.iter().map(|c| c.to_dir_entry()).collect();
+    let (_, snapshot) = tree.child_entries(ROOT, 0, usize::MAX);
     let _ = app.emit(
         "scan-tree",
         ScanTreeEvent {
@@ -232,7 +173,7 @@ pub async fn scan_disk(
         },
     );
 
-    let count = count_nodes(&tree);
+    let count = tree.node_count();
     *state.0.lock().map_err(|e| e.to_string())? = Some(tree);
     Ok(count)
 }
@@ -243,75 +184,39 @@ pub fn get_children(
     top_n: usize,
     state: State<'_, ScanState>,
 ) -> Result<Vec<DirEntry>, String> {
+    children_page(&state, &parent_path, 0, top_n).map(|p| p.entries)
+}
+
+/// 分页获取子项（按大小降序），供虚拟列表滚动到末尾时继续加载。
+#[tauri::command]
+pub fn get_children_page(
+    parent_path: String,
+    offset: usize,
+    limit: usize,
+    state: State<'_, ScanState>,
+) -> Result<ChildrenPage, String> {
+    children_page(&state, &parent_path, offset, limit)
+}
+
+fn children_page(
+    state: &ScanState,
+    parent_path: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<ChildrenPage, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let tree = guard.as_ref().ok_or("No scan data. Run a scan first.")?;
 
-    let norm = normalize(&parent_path);
-    let node = find_node(tree, &norm).ok_or_else(|| format!("Path not found: {norm}"))?;
-
-    let mut entries: Vec<DirEntry> = node.children.iter().map(|c| c.to_dir_entry()).collect();
-    entries.sort_by(|a, b| b.logical_size.cmp(&a.logical_size));
-    entries.truncate(top_n);
-    Ok(entries)
-}
-
-/// Find a node by path (case-insensitive — NTFS 与默认 APFS 均不区分大小写).
-/// Avoids `to_ascii_lowercase()` allocations — uses `eq_ignore_ascii_case` directly.
-pub(crate) fn find_node<'a>(node: &'a TreeNode, target: &str) -> Option<&'a TreeNode> {
-    if node.path.eq_ignore_ascii_case(target) {
-        return Some(node);
-    }
-    // Only recurse into directories whose path is a true prefix of the target
-    if node.is_dir && is_strict_ancestor(&node.path, target) {
-        for child in &node.children {
-            if let Some(found) = find_node(child, target) {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
-
-/// Mutable variant of `find_node` for in-place updates.
-pub(crate) fn find_node_mut<'a>(node: &'a mut TreeNode, target: &str) -> Option<&'a mut TreeNode> {
-    if node.path.eq_ignore_ascii_case(target) {
-        return Some(node);
-    }
-    if node.is_dir && is_strict_ancestor(&node.path, target) {
-        for child in &mut node.children {
-            if let Some(found) = find_node_mut(child, target) {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
-
-fn count_nodes(node: &TreeNode) -> u64 {
-    1 + node.children.iter().map(count_nodes).sum::<u64>()
-}
-
-/// 对 target 的所有真祖先节点（不含 target 自身）应用大小/计数增量。
-/// 用于删除/清空/刷新节点后让上层目录的统计立即一致，免去整盘重扫。
-pub(crate) fn adjust_ancestors(
-    node: &mut TreeNode,
-    target: &str,
-    delta_size: i64,
-    delta_files: i64,
-    delta_dirs: i64,
-) {
-    if node.path.eq_ignore_ascii_case(target) {
-        return;
-    }
-    if !is_strict_ancestor(&node.path, target) {
-        return;
-    }
-    node.logical_size = (node.logical_size as i64 + delta_size).max(0) as u64;
-    node.files = (node.files as i64 + delta_files).max(0) as u64;
-    node.subdirs = (node.subdirs as i64 + delta_dirs).max(0) as u64;
-    for child in &mut node.children {
-        adjust_ancestors(child, target, delta_size, delta_files, delta_dirs);
-    }
+    let norm = normalize(parent_path);
+    let id = tree
+        .find(&norm)
+        .ok_or_else(|| format!("Path not found: {norm}"))?;
+    let (total, entries) = tree.child_entries(id, offset, limit.min(MAX_PAGE_SIZE));
+    Ok(ChildrenPage {
+        total,
+        parent_size: tree.node(id).size(),
+        entries,
+    })
 }
 
 pub(crate) fn normalize(p: &str) -> String {
