@@ -27,6 +27,7 @@ futures = "0.3"
 notify = "6"
 png = "0.17"
 base64 = "0.22"
+flate2 = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -36,3 +37,10 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+# 扫描快照的压缩在调试版里也开优化，不然压一块盘要十几秒
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3

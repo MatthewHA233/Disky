@@ -584,6 +584,7 @@ version = "0.1.6"
 dependencies = [
  "base64 0.22.1",
  "bincode",
+ "flate2",
  "futures",
  "libc",
  "notify",

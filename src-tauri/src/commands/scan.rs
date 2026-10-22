@@ -131,7 +131,7 @@ pub async fn scan_disk(
 
     let digest_dir = super::archive::digest_dir(&app).ok();
     let scanned_at = super::archive::now_secs();
-    let tree = {
+    let (tree, snapshot_blob) = {
         let norm = norm.clone();
         let progress = progress.clone();
         let app_clone = app.clone();
@@ -146,7 +146,8 @@ pub async fn scan_disk(
                     },
                 );
             });
-            // 整盘扫描顺带给档案馆留一份摘要（档案馆跨盘汇总靠它；上一份留着比大小变化）
+            // 整盘扫描顺带给档案馆留一份摘要（档案馆跨盘汇总靠它；上一份留着比大小变化），
+            // 再编码一份完整的树，扫描结束后在后台压缩存盘，重启后目录视图不用重扫
             let volume = digest::is_volume_root(tree.root_path());
             if let Some(dir) = digest_dir.filter(|_| volume) {
                 let d = DriveDigest::build(&tree, scanned_at);
@@ -154,7 +155,8 @@ pub async fn scan_disk(
                     eprintln!("保存档案馆摘要失败: {e}");
                 }
             }
-            tree
+            let blob = volume.then(|| tree.encode());
+            (tree, blob)
         })
         .await
         .map_err(|e| format!("scan thread error: {e}"))?
@@ -186,7 +188,15 @@ pub async fn scan_disk(
     );
 
     let count = tree.node_count();
+    let root = tree.root_path().to_string();
     *state.0.lock().map_err(|e| e.to_string())? = Some(tree);
+    if let (Some(blob), Ok(dir)) = (snapshot_blob, super::snapshot::snapshot_dir(&app)) {
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = super::snapshot::save_blob(&dir, &root, scanned_at, &blob) {
+                eprintln!("{e}");
+            }
+        });
+    }
     Ok(count)
 }
 
