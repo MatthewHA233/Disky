@@ -59,12 +59,26 @@ pub fn open_path(path: String) -> Result<(), String> {
 // 2. Show in Explorer / Finder (select the item)
 // ---------------------------------------------------------------------------
 
+/// explorer 的 /select 参数。只能给路径加引号：交给 .arg() 时带空格的路径会被整段加上引号
+/// （"/select,C:\Program Files"），explorer 认不出就退回去打开「文档」。盘根要带上 \
+#[cfg(windows)]
+fn explorer_select_arg(path: &str) -> Result<String, String> {
+    // Windows 路径里不会有引号；有的话拼进去会多出参数
+    if path.contains('"') {
+        return Err("路径不对".into());
+    }
+    let mut norm = path.replace('/', "\\");
+    if norm.len() == 2 && norm.ends_with(':') {
+        norm.push('\\');
+    }
+    Ok(format!("/select,\"{norm}\""))
+}
+
 #[cfg(windows)]
 #[tauri::command]
 pub fn show_in_explorer(path: String) -> Result<(), String> {
-    let norm = path.replace('/', "\\");
     Command::new("explorer.exe")
-        .arg(format!("/select,{norm}"))
+        .raw_arg(explorer_select_arg(&path)?)
         .spawn()
         .map_err(|e| format!("Failed to open Explorer: {e}"))?;
     Ok(())
@@ -426,4 +440,17 @@ pub fn remove_scan_node(path: String, state: State<'_, ScanState>) -> Result<(),
         return Err("Cannot remove root".into());
     }
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::explorer_select_arg;
+
+    #[test]
+    fn explorer_select_quotes_only_the_path() {
+        assert_eq!(explorer_select_arg(r"C:\Program Files (x86)\Steam").as_deref(), Ok(r#"/select,"C:\Program Files (x86)\Steam""#));
+        assert_eq!(explorer_select_arg("D:/my files/game").as_deref(), Ok(r#"/select,"D:\my files\game""#));
+        assert_eq!(explorer_select_arg("C:").as_deref(), Ok(r#"/select,"C:\""#));
+        assert!(explorer_select_arg(r#"C:\a" /x"#).is_err(), "带引号会多出参数");
+    }
 }
