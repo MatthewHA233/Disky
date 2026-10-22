@@ -1,3 +1,4 @@
+mod archive;
 mod commands;
 mod scanner;
 
@@ -15,6 +16,23 @@ pub fn run() {
             commands::scan::scan_disk,
             commands::scan::get_children,
             commands::scan::get_children_page,
+            commands::archive::classify_footprints,
+            commands::archive::get_archive,
+            commands::archive::archive_place,
+            commands::archive::archive_assign,
+            commands::archive::archive_unassign,
+            commands::archive::archive_notes,
+            commands::archive::archive_delete_note,
+            commands::archive::archive_mode,
+            commands::archive::archive_set_mode,
+            commands::archive::archive_reset,
+            commands::archive::archive_create_box,
+            commands::archive::archive_rename_box,
+            commands::archive::archive_delete_box,
+            commands::archive::archive_icons,
+            commands::archive::archive_forget,
+            commands::archive::archive_ai_classify,
+            commands::archive::archive_ai_check,
             commands::cleanup::get_items_info,
             commands::cleanup::delete_items,
             commands::history::save_scan,

@@ -851,6 +851,43 @@ async fn generate_title_api(settings: &AiSettings, prompt: &str) -> Option<Strin
     text.map(|s| s.to_string())
 }
 
+/// 一次性提问（非流式），按设置走 API 或 Claude Code，返回模型的文字回复
+pub(crate) async fn complete_once(settings: &AiSettings, prompt: &str, max_tokens: u32) -> Result<String, String> {
+    if settings.provider == "claude-code" {
+        return crate::commands::agent_cli::prompt_once_cli(settings, prompt, None, std::time::Duration::from_secs(180))
+            .await;
+    }
+    if settings.api_key.is_empty() {
+        return Err("还没有配置 AI：请在 AI 设置里填写 API Key".into());
+    }
+    let client = build_http_client(settings)?;
+    let body = serde_json::json!({
+        "model": settings.model_id,
+        "max_tokens": max_tokens,
+        "messages": [{ "role": "user", "content": prompt }],
+    });
+    let resp = apply_auth_headers(client.post(build_api_url(settings)), settings)
+        .header("content-type", "application/json")
+        // 接口挂住时别让「测试连接」「AI 核对」一直转圈
+        .timeout(std::time::Duration::from_secs(120))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("请求 AI 失败: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("AI 返回错误（{status}）：{}", text.chars().take(300).collect::<String>()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("AI 回复无法解析: {e}"))?;
+    let text = if settings.api_type == "openai" {
+        v["choices"][0]["message"]["content"].as_str()
+    } else {
+        v["content"][0]["text"].as_str()
+    };
+    text.map(str::to_string).ok_or_else(|| "AI 没有返回文字内容".into())
+}
+
 #[tauri::command]
 pub async fn analyze_paths(
     app: tauri::AppHandle,

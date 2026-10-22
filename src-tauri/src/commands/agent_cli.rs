@@ -233,13 +233,42 @@ fn is_resume_failure(text: &str) -> bool {
 /// 用 claude -p --model haiku 一次性概括出短标题（纯文本输出，不启用工具）。
 /// 失败返回 None，由调用方回退。
 pub async fn generate_title_cli(settings: &AiSettings, prompt: &str) -> Option<String> {
-    let bin = resolve_claude_bin()?;
     // 优先用最快的 haiku；用户自定义了 cli_model 也仍用 haiku 省成本（标题不需要强模型）
-    let args: Vec<String> = vec![
-        "-p".into(),
-        "--model".into(),
-        "claude-haiku-4-5".into(),
-    ];
+    // 标题生成限时 30s，超时放弃走回退
+    prompt_once_cli(settings, prompt, Some("claude-haiku-4-5"), std::time::Duration::from_secs(30))
+        .await
+        .ok()
+}
+
+/// 一次性提问：`claude -p`，纯文本输出。`model` 为 None 时用设置里的模型。
+pub async fn prompt_once_cli(
+    settings: &AiSettings,
+    prompt: &str,
+    model: Option<&str>,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    prompt_once_cli_with(settings, prompt, model, &[], timeout).await
+}
+
+/// 同 `prompt_once_cli`，另外带上命令行参数（限定能用的工具、加可读目录等），放在最后
+pub async fn prompt_once_cli_with(
+    settings: &AiSettings,
+    prompt: &str,
+    model: Option<&str>,
+    extra: &[String],
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    let bin = resolve_claude_bin().ok_or("没有找到 Claude Code，请先安装或在 AI 设置里改用 API")?;
+    let mut args: Vec<String> = vec!["-p".into()];
+    let model = model.map(str::to_string).or_else(|| {
+        let m = settings.cli_model.trim();
+        (!m.is_empty() && m != "default").then(|| m.to_string())
+    });
+    if let Some(m) = model {
+        args.push("--model".into());
+        args.push(m);
+    }
+    args.extend(extra.iter().cloned());
     let mut std_cmd = build_command(&bin, &args);
     std_cmd
         .stdin(Stdio::piped())
@@ -256,13 +285,12 @@ pub async fn generate_title_cli(settings: &AiSettings, prompt: &str) -> Option<S
     let mut child = tokio::process::Command::from(std_cmd)
         .kill_on_drop(true)
         .spawn()
-        .ok()?;
+        .map_err(|e| format!("启动 Claude Code 失败: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(prompt.as_bytes()).await;
         drop(stdin);
     }
-    // 标题生成限时 30s，超时放弃走回退
-    let out = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+    let out = tokio::time::timeout(timeout, async {
         let mut buf = String::new();
         if let Some(mut stdout) = child.stdout.take() {
             let _ = stdout.read_to_string(&mut buf).await;
@@ -271,12 +299,12 @@ pub async fn generate_title_cli(settings: &AiSettings, prompt: &str) -> Option<S
         buf
     })
     .await
-    .ok()?;
+    .map_err(|_| "Claude Code 没有在限定时间内回复".to_string())?;
     let trimmed = out.trim();
     if trimmed.is_empty() {
-        None
+        Err("Claude Code 没有返回内容".into())
     } else {
-        Some(trimmed.to_string())
+        Ok(trimmed.to_string())
     }
 }
 

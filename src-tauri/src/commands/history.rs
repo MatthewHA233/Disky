@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use tauri::{Manager, State};
 
+use crate::archive::digest::{self, DriveDigest};
 use crate::commands::scan::ScanState;
 use crate::scanner::{join_path, DirEntry, NewChild, NodeId, ScanTree, Visit, ROOT};
 
@@ -196,11 +197,12 @@ pub async fn load_scan(
     let app_clone = app.clone();
     let (drive, tree) = tokio::task::spawn_blocking(move || -> Result<(String, ScanTree), String> {
         let conn = ensure_db(&app_clone)?;
-        let (drive, tree_file): (String, String) = conn
+        let (drive, tree_file, saved_at): (String, String, i64) = conn
             .query_row(
-                "SELECT drive, COALESCE(tree_file, '') FROM scans WHERE id = ?1",
+                "SELECT drive, COALESCE(tree_file, ''), COALESCE(CAST(strftime('%s', created_at, 'utc') AS INTEGER), 0)
+                 FROM scans WHERE id = ?1",
                 params![id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(|e| e.to_string())?;
 
@@ -210,6 +212,15 @@ pub async fn load_scan(
 
         let dir = data_dir(&app_clone)?;
         let tree = read_tree_file(&dir.join(&tree_file))?;
+        // 打开的记录比档案馆已有的摘要新（或那块盘还没有摘要）时，用它更新档案馆
+        if digest::is_volume_root(tree.root_path()) {
+            if let Ok(dir) = crate::commands::archive::digest_dir(&app_clone) {
+                let d = DriveDigest::build(&tree, saved_at);
+                if let Err(e) = digest::save_if_newer(&dir, &d) {
+                    eprintln!("保存档案馆摘要失败: {e}");
+                }
+            }
+        }
         Ok((drive, tree))
     })
     .await
@@ -509,3 +520,4 @@ pub fn list_cleanup_logs(
 
     Ok(CleanupLogPage { sessions, total_sessions })
 }
+

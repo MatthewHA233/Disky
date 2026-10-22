@@ -5,6 +5,7 @@ use std::time::Duration;
 use sysinfo::Disks;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::archive::digest::{self, DriveDigest};
 use crate::scanner::walk::{scan_tree_progressive, ScanProgress};
 use crate::scanner::{normalize_path, DirEntry, ScanTree, ROOT};
 
@@ -128,12 +129,14 @@ pub async fn scan_disk(
         })
     };
 
+    let digest_dir = super::archive::digest_dir(&app).ok();
+    let scanned_at = super::archive::now_secs();
     let tree = {
         let norm = norm.clone();
         let progress = progress.clone();
         let app_clone = app.clone();
         tokio::task::spawn_blocking(move || {
-            scan_tree_progressive(&norm, &progress, |children| {
+            let tree = scan_tree_progressive(&norm, &progress, |children| {
                 let _ = app_clone.emit(
                     "scan-tree",
                     ScanTreeEvent {
@@ -142,7 +145,16 @@ pub async fn scan_disk(
                         current_dir: String::new(),
                     },
                 );
-            })
+            });
+            // 整盘扫描顺带给档案馆留一份摘要（档案馆跨盘汇总靠它；上一份留着比大小变化）
+            let volume = digest::is_volume_root(tree.root_path());
+            if let Some(dir) = digest_dir.filter(|_| volume) {
+                let d = DriveDigest::build(&tree, scanned_at);
+                if let Err(e) = digest::save_rotating(&dir, &d) {
+                    eprintln!("保存档案馆摘要失败: {e}");
+                }
+            }
+            tree
         })
         .await
         .map_err(|e| format!("scan thread error: {e}"))?
