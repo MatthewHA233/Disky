@@ -1,0 +1,223 @@
+/* 新手引导的动效：按 Fluent 的缓动和时长（入场减速曲线、换页 333–500ms）。
+ * 每个元素的静止样式就是最终状态，动画只描述「从哪来」，系统开了减少动画时直接显示最终画面。 */
+
+.oobe {
+  --oobe-ease: cubic-bezier(0.1, 0.9, 0.2, 1);
+  --oobe-ease-std: cubic-bezier(0.8, 0, 0.2, 1);
+  --oobe-sw: #0F6CBD;
+  --oobe-personal: #C08A00;
+  --oobe-dev: #8764B8;
+  animation: oobe-fade-in 400ms var(--oobe-ease) both;
+}
+
+.oobe-title {
+  font-family: "Segoe UI Variable Display", "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.oobe-leave {
+  animation: oobe-fade-out 250ms var(--oobe-ease-std) both;
+}
+
+@keyframes oobe-fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes oobe-fade-out {
+  to { opacity: 0; transform: scale(1.02); }
+}
+
+/* 左边的插画区：Windows 11 那种柔和的光晕，慢慢漂 */
+.oobe-hero {
+  background:
+    radial-gradient(55% 45% at 28% 30%, color-mix(in srgb, var(--fl-accent) 30%, transparent), transparent 70%),
+    radial-gradient(50% 55% at 78% 78%, color-mix(in srgb, var(--fl-ai) 24%, transparent), transparent 70%),
+    radial-gradient(40% 40% at 85% 15%, color-mix(in srgb, var(--fl-accent) 14%, transparent), transparent 70%),
+    var(--fl-layer);
+  background-size: 140% 140%;
+  animation: oobe-bloom 18s ease-in-out infinite alternate;
+}
+
+@keyframes oobe-bloom {
+  from { background-position: 0% 0%; }
+  to { background-position: 100% 100%; }
+}
+
+.oobe-art {
+  animation: oobe-art-in 500ms var(--oobe-ease) both;
+}
+
+@keyframes oobe-art-in {
+  from { opacity: 0; transform: scale(0.96); }
+}
+
+.oobe-float {
+  animation: oobe-float 6s ease-in-out 1.8s infinite alternate;
+}
+
+@keyframes oobe-float {
+  to { transform: translateY(-6px); }
+}
+
+/* 换页：前进时从右边滑进来，后退时从左边；里面的几段错开一点 */
+.oobe-page > * {
+  animation: oobe-in-next 500ms var(--oobe-ease) both;
+}
+
+.oobe-page[data-dir="back"] > * {
+  animation-name: oobe-in-back;
+}
+
+.oobe-page > :nth-child(2) { animation-delay: 40ms; }
+.oobe-page > :nth-child(3) { animation-delay: 80ms; }
+.oobe-page > :nth-child(4) { animation-delay: 120ms; }
+.oobe-page > :nth-child(5) { animation-delay: 160ms; }
+.oobe-page > :nth-child(n + 6) { animation-delay: 200ms; }
+
+@keyframes oobe-in-next {
+  from { opacity: 0; transform: translateX(32px); }
+}
+
+@keyframes oobe-in-back {
+  from { opacity: 0; transform: translateX(-32px); }
+}
+
+/* 底部的步骤圆点（像 Windows 的 PipsPager） */
+.oobe-pip {
+  transition: width 333ms var(--oobe-ease), background-color 167ms linear;
+}
+
+/* ---- 欢迎：散落的图标归进三个箱子 ---- */
+.oobe-box {
+  stroke-dasharray: 1;
+  animation: oobe-draw 700ms var(--oobe-ease) both;
+}
+
+.oobe-box-fill {
+  animation: oobe-fade-in 600ms linear 1.3s both;
+}
+
+@keyframes oobe-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+.oobe-tile {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: oobe-tile-in 900ms var(--oobe-ease) both;
+  animation-delay: calc(350ms + var(--i) * 45ms);
+}
+
+@keyframes oobe-tile-in {
+  from { opacity: 0; transform: translate(var(--sx), var(--sy)) rotate(var(--r)) scale(0.8); }
+  40% { opacity: 1; }
+}
+
+/* ---- 接入 AI：问一句、给选项、选中一个 ---- */
+.oobe-pop {
+  animation: oobe-pop 333ms var(--oobe-ease) both;
+}
+
+@keyframes oobe-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+}
+
+.oobe-line {
+  transform-origin: left center;
+  animation: oobe-line 500ms var(--oobe-ease) both;
+}
+
+@keyframes oobe-line {
+  from { transform: scaleX(0); }
+}
+
+/* 「正在输入」只是过场，静止时不显示 */
+.oobe-typing {
+  opacity: 0;
+  animation: oobe-typing 900ms linear 600ms both;
+}
+
+@keyframes oobe-typing {
+  from { opacity: 0; }
+  15%, 85% { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.oobe-dot {
+  animation: oobe-dot 900ms ease-in-out infinite;
+}
+
+@keyframes oobe-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+
+.oobe-pick {
+  animation: oobe-pick 333ms var(--oobe-ease) 3s both;
+}
+
+@keyframes oobe-pick {
+  from { background-color: var(--fl-card); color: var(--fl-text); border-color: var(--fl-stroke); }
+  to { background-color: var(--fl-accent); color: var(--fl-on-accent); border-color: var(--fl-accent); }
+}
+
+.oobe-twinkle {
+  animation: oobe-twinkle 2.4s ease-in-out infinite;
+}
+
+@keyframes oobe-twinkle {
+  50% { transform: scale(0.82) rotate(20deg); opacity: 0.7; }
+}
+
+/* ---- 扫描：Fluent 的进度环 ---- */
+.oobe-ring-arc {
+  transition: stroke-dashoffset 600ms var(--oobe-ease);
+}
+
+.oobe-ring-spin {
+  transform-origin: center;
+  animation: oobe-spin 1.4s linear infinite;
+}
+
+.oobe-ring-spin .oobe-ring-arc {
+  animation: oobe-arc 1.4s var(--oobe-ease-std) infinite alternate;
+}
+
+@keyframes oobe-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes oobe-arc {
+  from { stroke-dashoffset: 0.92; }
+  to { stroke-dashoffset: 0.3; }
+}
+
+.oobe-bar {
+  transform-origin: left center;
+  animation: oobe-line 700ms var(--oobe-ease) both;
+}
+
+/* 实时的条子：跟着扫到的大小慢慢长（和目录视图扫描时一样） */
+.oobe-live-bar {
+  transition: width 400ms var(--oobe-ease);
+}
+
+/* ---- 开始：进度条填满、打勾 ---- */
+.oobe-fill {
+  transform-origin: left center;
+  animation: oobe-line 900ms var(--oobe-ease) both;
+}
+
+.oobe-check {
+  stroke-dasharray: 1;
+  animation: oobe-draw 500ms var(--oobe-ease) 900ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oobe,
+  .oobe * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
