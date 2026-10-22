@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, ChatSession, CliDetection, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage } from "../types";
+import type { ChildrenPage, DirEntry, DriveInfo, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, ChatSession, CliDetection, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage } from "../types";
 
 export const listDrives = () => invoke<DriveInfo[]>("list_drives");
 
@@ -7,6 +7,9 @@ export const scanDisk = (path: string) => invoke<number>("scan_disk", { path });
 
 export const getChildren = (parentPath: string, topN: number) =>
   invoke<DirEntry[]>("get_children", { parentPath, topN });
+
+export const getChildrenPage = (parentPath: string, offset: number, limit: number) =>
+  invoke<ChildrenPage>("get_children_page", { parentPath, offset, limit });
 
 export const getItemsInfo = (paths: string[]) => invoke<ItemInfo[]>("get_items_info", { paths });
 

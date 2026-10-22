@@ -1,7 +1,25 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { AiAnalysis, DirEntry, FileTag } from "../types";
-import { getChildren } from "../lib/invoke";
+import { getChildrenPage } from "../lib/invoke";
 import { formatSize, formatNumber } from "../lib/format";
+import {
+  PAGE_SIZE,
+  appendPage,
+  expandWithPages,
+  fetchExpandPages,
+  findNode,
+  flattenTree,
+  liveRows,
+  makeRoot,
+  pagePaths,
+  updateNode,
+  type EntryRow,
+  type GroupPos,
+  type MoreRow,
+  type TreeNode,
+  type TreeRow,
+} from "../lib/dirTree";
 import { StarRating } from "./StarRating";
 import { ChevronRight, ChevronDown, FolderOpen, File, Loader2, Sparkles } from "lucide-react";
 import gsap from "gsap";
@@ -25,44 +43,18 @@ interface Props {
   activePath?: string | null;
 }
 
-interface TreeNode extends DirEntry {
-  children?: TreeNode[];
-  expanded?: boolean;
-  loaded?: boolean;
-}
+/** 单行行高估计；AI 注释换行等多行情况由 measureElement 实测修正 */
+const ROW_ESTIMATE = 22;
+const LIST_PADDING = 8;
 
-/** Ensure `target` node is expanded, loading children if needed. Collects newly loaded paths into `loadedPaths`. */
-async function expandNode(list: TreeNode[], target: string, loadedPaths?: string[]): Promise<TreeNode[]> {
-  const result: TreeNode[] = [];
-  for (const node of list) {
-    if (node.path === target) {
-      if (!node.loaded && node.is_dir) {
-        const kids = await getChildren(node.path, 200);
-        loadedPaths?.push(...kids.map((k) => k.path));
-        result.push({
-          ...node, expanded: true, loaded: true,
-          children: kids.map((k) => ({ ...k, expanded: false, loaded: false })),
-        });
-      } else {
-        result.push({ ...node, expanded: true });
-      }
-    } else if (node.children) {
-      result.push({ ...node, children: await expandNode(node.children, target, loadedPaths) });
-    } else {
-      result.push(node);
-    }
-  }
-  return result;
-}
+const fetchFirstPage = (path: string) => getChildrenPage(path, 0, PAGE_SIZE);
 
-/** Expand every path in navPath[1..n] into the node list. Collects newly loaded paths into `loadedPaths`. */
-async function expandToNav(list: TreeNode[], navPath: string[], loadedPaths?: string[]): Promise<TreeNode[]> {
-  let updated = list;
-  for (let i = 1; i < navPath.length; i++) {
-    updated = await expandNode(updated, navPath[i], loadedPaths);
-  }
-  return updated;
-}
+const GROUP_CLASS: Record<GroupPos, string> = {
+  none: "",
+  first: "bg-photon/[0.04] border-x border-t border-[#FF6D00]/25 rounded-t-xl pt-0.5",
+  middle: "bg-photon/[0.04] border-x border-[#FF6D00]/25",
+  last: "bg-photon/[0.04] border-x border-b border-[#FF6D00]/25 rounded-b-xl pb-0.5",
+};
 
 export function DirectoryTree({
   rootPath, liveChildren, scanning,
@@ -70,21 +62,47 @@ export function DirectoryTree({
   navPath, onNavigate, onContextMenu,
   pathTags, onRemoveTag, onPathsLoaded, activePath,
 }: Props) {
-  const [nodes, setNodes] = useState<TreeNode[]>([]);
+  const [root, setRoot] = useState<TreeNode | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [failedMore, setFailedMore] = useState<ReadonlySet<string>>(new Set());
   const [pendingRemoveTag, setPendingRemoveTag] = useState<{ path: string; tagId: number; isDir: boolean; tagName: string; tagColor: string } | null>(null);
   const selfNav = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const scrollPendingRef = useRef<string | null>(null);
+  const loadingMoreRef = useRef<Set<string>>(new Set());
+
+  // 异步回调里读取最新树（避免闭包拿到旧状态）
+  const rootRef = useRef(root);
+  useEffect(() => { rootRef.current = root; }, [root]);
 
   // Capture latest navPath for use in initial-load closure
   const navPathRef = useRef(navPath);
   useEffect(() => { navPathRef.current = navPath; }, [navPath]);
 
+  const rows = useMemo<TreeRow[]>(
+    () => (scanning ? liveRows(liveChildren) : root ? flattenTree(root, activePath ?? null) : []),
+    [scanning, liveChildren, root, activePath]
+  );
+
+  // 引用必须稳定：getItemKey 变化会让虚拟列表重算全部行的测量（滚动时每帧都会触发）
+  const getItemKey = useCallback((index: number) => rows[index].key, [rows]);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => ROW_ESTIMATE,
+    getItemKey,
+    overscan: 12,
+    paddingStart: LIST_PADDING,
+    paddingEnd: LIST_PADDING,
+    scrollPaddingStart: LIST_PADDING,
+    useFlushSync: false,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+
   // GSAP entrance
   useEffect(() => {
-    if (!scanning && nodes.length > 0 && listRef.current) {
+    if (!scanning && (root?.children?.length ?? 0) > 0 && listRef.current) {
       const ctx = gsap.context(() => {
         gsap.from(".tree-row-anim", {
           y: 20, opacity: 0, duration: 0.4, stagger: 0.02, ease: "power3.out", clearProps: "all",
@@ -92,86 +110,74 @@ export function DirectoryTree({
       }, listRef);
       return () => ctx.revert();
     }
-  }, [scanning, rootPath]);
+  }, [scanning, rootPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Queue scroll when activePath changes
   useEffect(() => {
     if (activePath) scrollPendingRef.current = activePath;
   }, [activePath]);
 
-  // After nodes update (expansion done), execute pending scroll-to-top
+  // 目标行出现在列表里（展开完成）后滚到顶部；虚拟列表中该行可能尚未挂载，按下标滚动
   useEffect(() => {
     const target = scrollPendingRef.current;
-    if (!target || !listRef.current) return;
-    const raf = requestAnimationFrame(() => {
-      const el = rowRefs.current.get(target);
-      const container = listRef.current;
-      if (el && container) {
-        const containerRect = container.getBoundingClientRect();
-        const elRect = el.getBoundingClientRect();
-        container.scrollTop += (elRect.top - containerRect.top) - 8;
-        scrollPendingRef.current = null;
-      }
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [nodes]);
-
-  const sortedLive = useMemo(() => {
-    return [...liveChildren].sort((a, b) => b.logical_size - a.logical_size);
-  }, [liveChildren]);
-
-  const displayItems = scanning ? sortedLive : nodes;
-  const totalSize = useMemo(() => displayItems.reduce((s, i) => s + i.logical_size, 0), [displayItems]);
+    if (!target) return;
+    const index = rows.findIndex((r) => r.kind === "entry" && r.node.path === target);
+    if (index < 0) return;
+    scrollPendingRef.current = null;
+    virtualizer.scrollToIndex(index, { align: "start" });
+  }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initial load — also applies current navPath expansion immediately (handles remount after TagBoard)
   useEffect(() => {
-    if (!scanning && rootPath) {
-      setLoading(true);
-      getChildren(rootPath, 200)
-        .then(async (items) => {
-          let initial: TreeNode[] = items.map((i) => ({ ...i, expanded: false, loaded: false }));
-          const allPaths = items.map((i) => i.path);
-          const nav = navPathRef.current;
-          if (nav.length > 1) {
-            initial = await expandToNav(initial, nav, allPaths);
-          }
-          setNodes(initial);
-          if (allPaths.length > 0) onPathsLoaded?.(allPaths);
-        })
-        .finally(() => setLoading(false));
-    } else {
-      setNodes([]);
+    if (scanning || !rootPath) {
+      setRoot(null);
+      setLoading(false);
+      return;
     }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setFailedMore(new Set());
+    (async () => {
+      try {
+        const page = await fetchFirstPage(rootPath);
+        const initial = makeRoot(rootPath, page);
+        const targets = navPathRef.current.slice(1);
+        const { pages, error: expandError } = await fetchExpandPages(initial, targets, fetchFirstPage);
+        if (cancelled) return;
+        // 某级展开失败时仍显示根目录和已展开的部分
+        setRoot(expandWithPages(initial, targets, pages));
+        if (expandError) setError(`展开目录失败：${String(expandError)}`);
+        const paths = [...page.entries.map((e) => e.path), ...pagePaths(pages.values())];
+        if (paths.length > 0) onPathsLoaded?.(paths);
+      } catch (e) {
+        if (!cancelled) {
+          setRoot(null);
+          setError(`加载目录失败：${String(e)}`);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [scanning, rootPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Toggle a node open/closed on user click
   const toggleNode = useCallback(async (path: string) => {
-    const newPaths: string[] = [];
-    const toggle = async (list: TreeNode[]): Promise<TreeNode[]> => {
-      const result: TreeNode[] = [];
-      for (const node of list) {
-        if (node.path === path) {
-          if (!node.loaded && node.is_dir) {
-            const kids = await getChildren(node.path, 200);
-            newPaths.push(...kids.map((k) => k.path));
-            result.push({
-              ...node, expanded: true, loaded: true,
-              children: kids.map((k) => ({ ...k, expanded: false, loaded: false })),
-            });
-          } else {
-            result.push({ ...node, expanded: !node.expanded });
-          }
-        } else if (node.children) {
-          result.push({ ...node, children: await toggle(node.children) });
-        } else {
-          result.push(node);
-        }
-      }
-      return result;
-    };
-    setNodes(await toggle(nodes));
-    if (newPaths.length > 0) onPathsLoaded?.(newPaths);
-  }, [nodes, onPathsLoaded]);
+    const node = rootRef.current && findNode(rootRef.current, path);
+    if (!node) return;
+    if (!node.is_dir || node.loaded) {
+      setRoot((prev) => prev && updateNode(prev, path, (n) => ({ ...n, expanded: !n.expanded })));
+      return;
+    }
+    try {
+      const page = await fetchFirstPage(path);
+      setRoot((prev) => prev && expandWithPages(prev, [path], new Map([[path, page]])));
+      if (page.entries.length > 0) onPathsLoaded?.(page.entries.map((e) => e.path));
+    } catch (e) {
+      setError(`展开目录失败：${String(e)}`);
+    }
+  }, [onPathsLoaded]);
 
   const handleDirClick = (path: string) => {
     selfNav.current = true;
@@ -182,158 +188,192 @@ export function DirectoryTree({
   // Expand tree to match navPath changes (user navigating via TreeMap / breadcrumb)
   useEffect(() => {
     if (selfNav.current) { selfNav.current = false; return; }
-    if (scanning || navPath.length <= 1 || nodes.length === 0) return;
-    const loadedPaths: string[] = [];
-    expandToNav(nodes, navPath, loadedPaths).then((updated) => {
-      setNodes(updated);
-      if (loadedPaths.length > 0) onPathsLoaded?.(loadedPaths);
+    const current = rootRef.current;
+    if (scanning || navPath.length <= 1 || !current) return;
+    const targets = navPath.slice(1);
+    fetchExpandPages(current, targets, fetchFirstPage).then(({ pages, error: expandError }) => {
+      setRoot((prev) => prev && expandWithPages(prev, targets, pages));
+      if (expandError) setError(`展开目录失败：${String(expandError)}`);
+      const paths = pagePaths(pages.values());
+      if (paths.length > 0) onPathsLoaded?.(paths);
     });
   }, [navPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const renderRow = (item: DirEntry | TreeNode, depth: number, parentSize: number) => {
-    const node = item as TreeNode;
-    const isTreeNode = "expanded" in node;
+  // 分页：取 path 的下一页并追加
+  const loadMore = useCallback(async (path: string) => {
+    if (loadingMoreRef.current.has(path)) return;
+    const node = rootRef.current && findNode(rootRef.current, path);
+    if (!node?.children) return;
+    const offset = node.children.length;
+    loadingMoreRef.current.add(path);
+    try {
+      const page = await getChildrenPage(path, offset, PAGE_SIZE);
+      setRoot((prev) => prev && appendPage(prev, path, offset, page));
+      if (page.entries.length > 0) onPathsLoaded?.(page.entries.map((e) => e.path));
+    } catch {
+      // 标记失败，占位行改为「点击重试」，避免滚动时反复请求
+      setFailedMore((prev) => new Set(prev).add(path));
+    } finally {
+      loadingMoreRef.current.delete(path);
+    }
+  }, [onPathsLoaded]);
+
+  // 分页占位行进入可视区即自动续取
+  useEffect(() => {
+    for (const item of virtualItems) {
+      const row = rows[item.index];
+      if (row?.kind === "more" && !failedMore.has(row.parentPath)) void loadMore(row.parentPath);
+    }
+  }, [virtualItems, rows, failedMore, loadMore]);
+
+  const retryMore = (path: string) => {
+    setFailedMore((prev) => new Set([...prev].filter((p) => p !== path)));
+  };
+
+  const renderEntry = ({ node, depth, parentSize }: EntryRow) => {
+    const item = node;
     const pct = parentSize > 0 ? (item.logical_size / parentSize) * 100 : 0;
     const isScanning = scanning && item.is_dir && item.logical_size === 0;
     const isSelected = selected?.has(item.path) ?? false;
     const hasAnalysis = analyses?.has(item.path);
     const isActive = item.path === activePath;
-    const hasExpandedChildren = isActive && isTreeNode && node.expanded && (node.children?.length ?? 0) > 0;
 
     return (
       <div
-        key={item.path}
-        ref={(el) => {
-          if (el) rowRefs.current.set(item.path, el);
-          else rowRefs.current.delete(item.path);
-        }}
         className={cn(
-          hasExpandedChildren && "rounded-xl ring-1 ring-[#FF6D00]/25 bg-photon/[0.04] my-0.5"
+          "tree-row-anim group flex items-center gap-1.5 px-1 py-0.5 cursor-pointer border-l-2 transition-all hover:bg-[#FFFFFF]/5",
+          isActive
+            ? "border-photon bg-photon/10 text-textMain"
+            : isSelected
+              ? "border-photon bg-photon/5"
+              : "border-transparent text-text-dim",
+          !isActive && hasAnalysis && !isSelected && "border-[#7B61FF]/30"
         )}
+        style={{ paddingLeft: `${depth * 1.25 + 0.25}rem` }}
+        onClick={() => !scanning && item.is_dir && handleDirClick(item.path)}
+        onContextMenu={(e) => {
+          if (onContextMenu && !scanning) {
+            e.preventDefault();
+            onContextMenu(item, e.clientX, e.clientY);
+          }
+        }}
       >
-        <div
-          className={cn(
-            "tree-row-anim group flex items-center gap-1.5 px-1 py-0.5 cursor-pointer border-l-2 transition-all hover:bg-[#FFFFFF]/5",
-            isActive
-              ? "border-photon bg-photon/10 text-textMain"
-              : isSelected
-                ? "border-photon bg-photon/5"
-                : "border-transparent text-text-dim",
-            !isActive && hasAnalysis && !isSelected && "border-[#7B61FF]/30"
-          )}
-          style={{ paddingLeft: `${depth * 1.25 + 0.25}rem` }}
-          onClick={() => !scanning && item.is_dir && handleDirClick(item.path)}
-          onContextMenu={(e) => {
-            if (onContextMenu && !scanning) {
-              e.preventDefault();
-              onContextMenu(item, e.clientX, e.clientY);
-            }
-          }}
-        >
-          {onSelect && !scanning && (
-            <div
-              className={cn(
-                "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
-                isSelected ? "bg-photon border-photon" : "border-slate group-hover:border-photon"
-              )}
-              onClick={(e) => { e.stopPropagation(); onSelect(item.path, item.logical_size); }}
-            >
-              {isSelected && (
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <polyline points="1.5,5 4,7.5 8.5,2" stroke="#ffffff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-            </div>
-          )}
-
-          <span className="w-4 flex justify-center shrink-0">
-            {item.is_dir ? (
-              scanning ? (
-                isScanning
-                  ? <Loader2 className="w-3 h-3 animate-spin text-photon" />
-                  : <ChevronRight className="w-3.5 h-3.5" />
-              ) : (
-                isTreeNode && node.expanded
-                  ? <ChevronDown className="w-3.5 h-3.5 text-photon" />
-                  : <ChevronRight className="w-3.5 h-3.5" />
-              )
-            ) : (
-              <span className="w-1 h-1 rounded-full bg-[#EAE6DF]/30" />
+        {onSelect && !scanning && (
+          <div
+            className={cn(
+              "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+              isSelected ? "bg-photon border-photon" : "border-slate group-hover:border-photon"
             )}
-          </span>
-
-          <div className="flex items-center gap-1.5 w-[15%] min-w-0 shrink-0">
-            {item.is_dir ? (
-              <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", isTreeNode && node.expanded ? "text-photon" : "text-photon/70")} />
-            ) : (
-              <File className="w-3.5 h-3.5 shrink-0 text-border/70" />
+            onClick={(e) => { e.stopPropagation(); onSelect(item.path, item.logical_size); }}
+          >
+            {isSelected && (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <polyline points="1.5,5 4,7.5 8.5,2" stroke="#ffffff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             )}
-            <span className={cn(
-              "break-all font-medium transition-colors group-hover:text-textMain text-[11px] leading-snug",
-              isActive ? "text-textMain font-semibold" : item.is_dir ? "text-photon" : "text-border",
-              isSelected && !isActive && "text-photon font-semibold"
-            )}>
-              {item.name}
-            </span>
-            {pathTags?.get(item.path)?.map((ft) => (
-              <span
-                key={ft.tag_id}
-                className="group/tag inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full shrink-0 text-[9px] font-medium leading-tight"
-                style={{ backgroundColor: `${ft.tag_color}25`, color: ft.tag_color }}
-              >
-                {ft.tag_name}
-                {onRemoveTag && (
-                  <button
-                    className="opacity-0 group-hover/tag:opacity-100 hover:text-danger transition-opacity -mr-0.5"
-                    onClick={(e) => { e.stopPropagation(); setPendingRemoveTag({ path: item.path, tagId: ft.tag_id, isDir: item.is_dir, tagName: ft.tag_name, tagColor: ft.tag_color }); }}
-                    title={`移除「${ft.tag_name}」`}
-                  >
-                    ×
-                  </button>
-                )}
-              </span>
-            ))}
           </div>
+        )}
 
-          <span className="w-16 text-right shrink-0 font-mono text-[10px]">
-            {isScanning ? (
-              <span className="text-photon animate-pulse">扫描中...</span>
+        <span className="w-4 flex justify-center shrink-0">
+          {item.is_dir ? (
+            scanning ? (
+              isScanning
+                ? <Loader2 className="w-3 h-3 animate-spin text-photon" />
+                : <ChevronRight className="w-3.5 h-3.5" />
             ) : (
-              <span className="text-textMain">{formatSize(item.logical_size)}</span>
-            )}
-          </span>
+              node.expanded
+                ? <ChevronDown className="w-3.5 h-3.5 text-photon" />
+                : <ChevronRight className="w-3.5 h-3.5" />
+            )
+          ) : (
+            <span className="w-1 h-1 rounded-full bg-[#EAE6DF]/30" />
+          )}
+        </span>
 
-          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
-            {!isScanning && item.is_dir ? formatNumber(item.files) : "-"}
+        <div className="flex items-center gap-1.5 w-[15%] min-w-0 shrink-0">
+          {item.is_dir ? (
+            <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", node.expanded ? "text-photon" : "text-photon/70")} />
+          ) : (
+            <File className="w-3.5 h-3.5 shrink-0 text-border/70" />
+          )}
+          <span className={cn(
+            "break-all font-medium transition-colors group-hover:text-textMain text-[11px] leading-snug",
+            isActive ? "text-textMain font-semibold" : item.is_dir ? "text-photon" : "text-border",
+            isSelected && !isActive && "text-photon font-semibold"
+          )}>
+            {item.name}
           </span>
-
-          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
-            {!isScanning && item.is_dir ? formatNumber(item.subdirs) : "-"}
-          </span>
-
-          <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
-            {!isScanning && `${pct.toFixed(1)}%`}
-          </span>
-
-          <span className="w-28 shrink-0 flex items-center justify-center">
-            {analyses?.get(item.path) && (
-              <StarRating priority={analyses.get(item.path)!.priority} />
-            )}
-          </span>
-
-          <span className="flex-1 min-w-0 text-xs text-text-dim group-hover:text-textMain transition-colors whitespace-pre-wrap break-words leading-snug">
-            {analyses?.get(item.path)?.description ?? ""}
-          </span>
+          {pathTags?.get(item.path)?.map((ft) => (
+            <span
+              key={ft.tag_id}
+              className="group/tag inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full shrink-0 text-[9px] font-medium leading-tight"
+              style={{ backgroundColor: `${ft.tag_color}25`, color: ft.tag_color }}
+            >
+              {ft.tag_name}
+              {onRemoveTag && (
+                <button
+                  className="opacity-0 group-hover/tag:opacity-100 hover:text-danger transition-opacity -mr-0.5"
+                  onClick={(e) => { e.stopPropagation(); setPendingRemoveTag({ path: item.path, tagId: ft.tag_id, isDir: item.is_dir, tagName: ft.tag_name, tagColor: ft.tag_color }); }}
+                  title={`移除「${ft.tag_name}」`}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
         </div>
 
-        {!scanning && isTreeNode && node.expanded && node.children && (
-          <div className="flex flex-col">
-            {node.children.map((c) => renderRow(c, depth + 1, item.logical_size))}
-          </div>
-        )}
+        <span className="w-16 text-right shrink-0 font-mono text-[10px]">
+          {isScanning ? (
+            <span className="text-photon animate-pulse">扫描中...</span>
+          ) : (
+            <span className="text-textMain">{formatSize(item.logical_size)}</span>
+          )}
+        </span>
+
+        <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
+          {!isScanning && item.is_dir ? formatNumber(item.files) : "-"}
+        </span>
+
+        <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
+          {!isScanning && item.is_dir ? formatNumber(item.subdirs) : "-"}
+        </span>
+
+        <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
+          {!isScanning && `${pct.toFixed(1)}%`}
+        </span>
+
+        <span className="w-28 shrink-0 flex items-center justify-center">
+          {analyses?.get(item.path) && (
+            <StarRating priority={analyses.get(item.path)!.priority} />
+          )}
+        </span>
+
+        <span className="flex-1 min-w-0 text-xs text-text-dim group-hover:text-textMain transition-colors whitespace-pre-wrap break-words leading-snug">
+          {analyses?.get(item.path)?.description ?? ""}
+        </span>
       </div>
     );
   };
+
+  const renderMore = ({ parentPath, depth, remaining }: MoreRow) => (
+    <div
+      className="flex items-center gap-1.5 px-1 py-0.5 font-mono text-[11px] text-text-dim"
+      style={{ paddingLeft: `${depth * 1.25 + 0.25}rem` }}
+    >
+      <span className="w-4 shrink-0" />
+      {failedMore.has(parentPath) ? (
+        <button className="text-danger hover:underline" onClick={() => retryMore(parentPath)}>
+          加载失败，点击重试（还有 {formatNumber(remaining)} 项）
+        </button>
+      ) : (
+        <>
+          <Loader2 className="w-3 h-3 animate-spin text-photon" />
+          正在加载剩余 {formatNumber(remaining)} 项...
+        </>
+      )}
+    </div>
+  );
 
   if (!scanning && loading) {
     return (
@@ -377,8 +417,30 @@ export function DirectoryTree({
         </span>
         <span className="flex-1 min-w-0">AI 注释</span>
       </div>
-      <div ref={listRef} className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-        {displayItems.map((item) => renderRow(item, 0, totalSize))}
+      {error && (
+        <div className="px-3 py-1 border-b border-slate shrink-0 font-mono text-[11px] text-danger flex items-center gap-2">
+          <span className="flex-1 min-w-0 truncate" title={error}>{error}</span>
+          <button className="text-text-dim hover:text-textMain" onClick={() => setError(null)}>×</button>
+        </div>
+      )}
+      <div ref={listRef} className="flex-1 overflow-y-auto custom-scrollbar">
+        <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualItems.map((item) => {
+            const row = rows[item.index];
+            if (!row) return null;
+            return (
+              <div
+                key={item.key}
+                data-index={item.index}
+                ref={virtualizer.measureElement}
+                className={cn("absolute left-0 top-0 w-full", GROUP_CLASS[row.group])}
+                style={{ transform: `translateY(${item.start}px)` }}
+              >
+                {row.kind === "entry" ? renderEntry(row) : renderMore(row)}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {pendingRemoveTag && onRemoveTag && (

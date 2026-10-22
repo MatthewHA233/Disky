@@ -7,6 +7,13 @@ export interface DirEntry {
   is_dir: boolean;
 }
 
+/** get_children_page 的分页结果（按大小降序） */
+export interface ChildrenPage {
+  total: number;
+  parent_size: number;
+  entries: DirEntry[];
+}
+
 export interface DriveInfo {
   mount_point: string;
   total_space: number;
