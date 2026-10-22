@@ -1,10 +1,12 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import type { CleanupSession } from "../types";
 import { listCleanupLogs } from "../lib/invoke";
 import { formatSize } from "../lib/format";
-import { normalizePath } from "../lib/path";
-import gsap from "gsap";
-import { History, XCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, FolderMinus, Trash2 } from "lucide-react";
+import { basename, normalizePath, parentPath } from "../lib/path";
+import { ChevronDown, ChevronLeft, ChevronRight, FolderMinus, Loader2, Trash2 } from "lucide-react";
+import { Dialog } from "./ui/Dialog";
+import { Button } from "./ui/Button";
+import { cn } from "../lib/utils";
 
 const PAGE_SIZE = 8;
 
@@ -12,187 +14,121 @@ interface Props {
   onClose: () => void;
 }
 
+function formatSessionTime(ts: string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime())
+    ? ts
+    : d.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/** 清理记录：每次清理一条，展开看具体删了什么 */
 export function HistoryDialog({ onClose }: Props) {
   const [sessions, setSessions] = useState<CleanupSession[]>([]);
   const [totalSessions, setTotalSessions] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
   const totalPages = Math.max(1, Math.ceil(totalSessions / PAGE_SIZE));
-
-  useEffect(() => {
-    if (dialogRef.current) {
-      gsap.fromTo(dialogRef.current,
-        { opacity: 0, y: 30, scale: 0.95 },
-        { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "power3.out" }
-      );
-    }
-  }, []);
-
-  const closeDialog = () => {
-    if (dialogRef.current) {
-      gsap.to(dialogRef.current, {
-        opacity: 0, y: 20, scale: 0.95, duration: 0.3, ease: "power2.in", onComplete: onClose
-      });
-    } else {
-      onClose();
-    }
-  };
+  const freedOnPage = sessions.reduce((s, x) => s + x.total_freed, 0);
 
   const fetchPage = (p: number) => {
     setLoading(true);
+    setError(null);
     listCleanupLogs(p, PAGE_SIZE)
       .then((res) => {
         setSessions(res.sessions);
         setTotalSessions(res.total_sessions);
         setPage(p);
       })
-      .catch(() => {})
+      .catch((e) => setError(`读取清理记录失败：${String(e)}`))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { fetchPage(1); }, []);
 
-  const toggleExpand = (key: string) => {
+  const toggleExpand = (key: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
-  };
 
-  const formatSessionTime = (ts: string) => {
-    try {
-      const d = new Date(ts);
-      return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-    } catch {
-      return ts;
-    }
-  };
+  const footer = totalPages > 1 ? (
+    <>
+      <span className="mr-auto text-xs text-text-dim">第 {page} / {totalPages} 页，共 {totalSessions} 次清理</span>
+      <Button variant="subtle" className="px-2" aria-label="上一页" disabled={page <= 1 || loading} onClick={() => fetchPage(page - 1)}>
+        <ChevronLeft className="w-4 h-4" />
+      </Button>
+      <Button variant="subtle" className="px-2" aria-label="下一页" disabled={page >= totalPages || loading} onClick={() => fetchPage(page + 1)}>
+        <ChevronRight className="w-4 h-4" />
+      </Button>
+    </>
+  ) : undefined;
 
   return (
-    <div className="fixed inset-0 bg-fiber/80 backdrop-blur-md flex flex-col items-center justify-center z-[100]" onClick={closeDialog}>
-      <div
-        ref={dialogRef}
-        className="glass-panel w-full max-w-4xl rounded-[2rem] overflow-hidden flex flex-col shadow-[0_20px_60px_-15px_rgba(0,0,0,0.8)] max-h-[85vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="px-8 py-5 border-b border-slate flex items-center justify-between bg-abyss shrink-0">
-          <div className="flex items-center gap-3">
-            <History className="w-5 h-5 text-photon" />
-            <h2 className="text-lg font-semibold text-textMain">清理记录</h2>
-          </div>
-          <button className="text-text-dim hover:text-textMain transition-colors" onClick={closeDialog}>
-            <XCircle className="w-6 h-6" />
-          </button>
+    <Dialog
+      title="清理记录"
+      subtitle={sessions.length > 0 ? <>这一页的 {sessions.length} 次清理共腾出 <b className="font-semibold text-success">{formatSize(freedOnPage)}</b></> : undefined}
+      onClose={onClose}
+      width="max-w-3xl"
+      footer={footer}
+    >
+      {error ? (
+        <div className="py-10 text-center">
+          <p className="text-danger">{error}</p>
+          <Button className="mt-3" onClick={() => fetchPage(page)}>重试</Button>
         </div>
+      ) : loading && sessions.length === 0 ? (
+        <div className="py-10 flex items-center justify-center gap-2 text-text-dim"><Loader2 className="w-4 h-4 animate-spin" />正在读取</div>
+      ) : sessions.length === 0 ? (
+        <div className="py-10 text-center text-text-dim">还没有清理过。在档案馆勾选可以腾出的空间，点右上角的清理按钮。</div>
+      ) : (
+        <div className="rounded border border-slate bg-abyss overflow-hidden">
+          {sessions.map((s) => {
+            const key = `${s.session_ts}_${s.drive}`;
+            const isOpen = expanded.has(key);
+            return (
+              <div key={key} className="border-b border-slate last:border-b-0">
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  className="w-full flex items-center gap-3 h-11 px-3 text-left hover:bg-hover transition-colors"
+                  onClick={() => toggleExpand(key)}
+                >
+                  <ChevronDown className={cn("w-4 h-4 shrink-0 text-text-dim transition-transform", !isOpen && "-rotate-90")} />
+                  <span className="font-semibold shrink-0">{normalizePath(s.drive)}</span>
+                  <span className="text-xs text-text-dim">{formatSessionTime(s.session_ts)}</span>
+                  <span className="text-xs text-text-dim">{s.actions.length} 项</span>
+                  <span className="flex-1" />
+                  <span className="shrink-0 font-semibold text-success">{formatSize(s.total_freed)}</span>
+                </button>
 
-        {/* Sessions list */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-3 min-h-0">
-          {loading && sessions.length === 0 ? (
-            <div className="text-center py-12 font-mono text-sm text-text-dim">加载中...</div>
-          ) : sessions.length === 0 ? (
-            <div className="text-center py-12 font-mono text-sm text-text-dim">暂无清理记录</div>
-          ) : (
-            sessions.map((s) => {
-              const key = `${s.session_ts}_${s.drive}`;
-              const isOpen = expanded.has(key);
-              return (
-                <div key={key} className="rounded-xl border border-slate bg-abyss overflow-hidden">
-                  {/* Session header (parent) */}
-                  <button
-                    className="w-full flex items-center gap-3 px-5 py-3 hover:bg-[#1A1A24] transition-colors text-left"
-                    onClick={() => toggleExpand(key)}
-                  >
-                    {isOpen
-                      ? <ChevronUp className="w-4 h-4 text-text-dim shrink-0" />
-                      : <ChevronDown className="w-4 h-4 text-text-dim shrink-0" />
-                    }
-                    <span className="text-sm font-mono text-textMain font-semibold shrink-0">
-                      {normalizePath(s.drive)}
-                    </span>
-                    <span className="text-xs font-mono text-text-dim">
-                      {formatSessionTime(s.session_ts)}
-                    </span>
-                    <span className="text-xs font-mono text-text-dim">
-                      {s.actions.length} 项操作
-                    </span>
-                    <span className="flex-1" />
-                    <span className="text-sm font-mono font-bold text-success shrink-0">
-                      +{formatSize(s.total_freed)}
-                    </span>
-                  </button>
-
-                  {/* Expanded action list (children) */}
-                  {isOpen && (
-                    <div className="border-t border-slate/50 bg-fiber/50">
-                      {s.actions.map((a) => {
-                        const isEmpty = a.action_type === "empty";
-                        return (
-                          <div
-                            key={a.id}
-                            className="flex flex-col gap-0.5 px-5 py-2 border-b border-slate/30 last:border-0 hover:bg-[#FFFFFF]/[0.02]"
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="w-4 flex justify-center shrink-0">
-                                {isEmpty
-                                  ? <FolderMinus className="w-3.5 h-3.5 text-photon" />
-                                  : <Trash2 className="w-3.5 h-3.5 text-danger" />
-                                }
-                              </span>
-                              <span className="text-xs font-mono text-text-dim shrink-0 w-10">
-                                {isEmpty ? "清空" : "删除"}
-                              </span>
-                              <span className="text-xs font-mono text-border truncate flex-1" title={a.path}>
-                                {a.path}
-                              </span>
-                              <span className="text-xs font-mono font-bold text-success shrink-0">
-                                +{formatSize(a.bytes_freed)}
-                              </span>
-                            </div>
-                            {a.description && (
-                              <div className="ml-[calc(1rem+0.75rem+2.5rem)] text-[11px] text-text-dim leading-snug truncate" title={a.description}>
-                                {a.description}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
+                {isOpen && (
+                  <div className="pb-1">
+                    {s.actions.map((a) => {
+                      const isEmpty = a.action_type === "empty";
+                      const Icon = isEmpty ? FolderMinus : Trash2;
+                      return (
+                        <div key={a.id} className="flex items-start gap-3 pl-10 pr-3 py-1.5 hover:bg-hover">
+                          <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-text-dim" aria-label={isEmpty ? "清空" : "删除"} />
+                          <span className="flex-1 min-w-0">
+                            <span className="block truncate" title={a.path}>{basename(a.path)}</span>
+                            <span className="block truncate text-[11px] text-text-faint">{isEmpty ? "清空了" : "删除了"} · {parentPath(a.path) ?? a.path}</span>
+                            {a.description && <span className="block truncate text-[11px] text-text-dim" title={a.description}>{a.description}</span>}
+                          </span>
+                          <span className="shrink-0 text-xs text-text-dim">{formatSize(a.bytes_freed)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="px-8 py-3 border-t border-slate bg-abyss flex items-center justify-center gap-3 shrink-0">
-            <button
-              className="p-1.5 rounded-md text-text-dim hover:text-textMain hover:bg-slate transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
-              disabled={page <= 1 || loading}
-              onClick={() => fetchPage(page - 1)}
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-xs font-mono text-text-dim">
-              <span className="text-textMain">{page}</span> / {totalPages}
-            </span>
-            <button
-              className="p-1.5 rounded-md text-text-dim hover:text-textMain hover:bg-slate transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
-              disabled={page >= totalPages || loading}
-              onClick={() => fetchPage(page + 1)}
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </Dialog>
   );
 }

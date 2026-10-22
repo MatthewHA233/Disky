@@ -47,13 +47,13 @@ export function TagPicker({ tags, fileTags, onToggle, onCreate, onDeleteTag, onC
         </div>
         <div className="flex gap-2">
           <button
-            className="flex-1 px-2 py-1 text-[11px] rounded-md bg-slate text-text-dim hover:bg-[#333340] transition-colors"
+            className="flex-1 px-2 py-1 text-[11px] rounded-md bg-slate text-text-dim hover:bg-hover transition-colors"
             onClick={() => setConfirmDelete(null)}
           >
             取消
           </button>
           <button
-            className="flex-1 px-2 py-1 text-[11px] rounded-md bg-[#E74C3C] text-white hover:bg-[#C0392B] transition-colors"
+            className="flex-1 px-2 py-1 text-[11px] rounded-md bg-critical text-white hover:bg-critical/90 transition-colors"
             onClick={() => {
               onDeleteTag(confirmDelete.id);
               setConfirmDelete(null);
@@ -69,7 +69,7 @@ export function TagPicker({ tags, fileTags, onToggle, onCreate, onDeleteTag, onC
   return (
     <div className="p-3 min-w-[220px]">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-semibold text-textMain uppercase tracking-wider">标记标签</span>
+        <span className="text-[11px] font-semibold text-textMain">标记标签</span>
         <button
           className="p-0.5 text-text-dim hover:text-textMain transition-colors"
           onClick={onClose}
@@ -87,8 +87,8 @@ export function TagPicker({ tags, fileTags, onToggle, onCreate, onDeleteTag, onC
                 className={cn(
                   "px-2.5 py-1 rounded-full text-[11px] font-medium transition-all border",
                   active
-                    ? "text-fiber border-transparent"
-                    : "bg-transparent border-slate text-text-dim hover:border-[#555]"
+                    ? "text-on-accent border-transparent"
+                    : "bg-transparent border-slate text-text-dim hover:border-text-faint"
                 )}
                 style={
                   active
@@ -101,7 +101,7 @@ export function TagPicker({ tags, fileTags, onToggle, onCreate, onDeleteTag, onC
               </button>
               {onDeleteTag && !tag.is_preset && (
                 <button
-                  className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-slate text-text-dim hover:bg-[#E74C3C] hover:text-white flex items-center justify-center opacity-0 group-hover/pill:opacity-100 transition-all"
+                  className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-slate text-text-dim hover:bg-critical hover:text-white flex items-center justify-center opacity-0 group-hover/pill:opacity-100 transition-all"
                   onClick={(e) => { e.stopPropagation(); setConfirmDelete(tag); }}
                   title={`删除标签「${tag.name}」`}
                 >
@@ -130,7 +130,7 @@ export function TagPicker({ tags, fileTags, onToggle, onCreate, onDeleteTag, onC
                 key={c}
                 className={cn(
                   "w-5 h-5 rounded-full border-2 transition-transform",
-                  newColor === c ? "border-[#EEEEF0] scale-110" : "border-transparent hover:scale-105"
+                  newColor === c ? "border-textMain scale-110" : "border-transparent hover:scale-105"
                 )}
                 style={{ backgroundColor: c }}
                 onClick={() => setNewColor(c)}
@@ -139,13 +139,13 @@ export function TagPicker({ tags, fileTags, onToggle, onCreate, onDeleteTag, onC
           </div>
           <div className="flex gap-1.5">
             <button
-              className="flex-1 px-2 py-1 text-[11px] rounded-md bg-slate text-text-dim hover:bg-[#333340] transition-colors"
+              className="flex-1 px-2 py-1 text-[11px] rounded-md bg-slate text-text-dim hover:bg-hover transition-colors"
               onClick={() => setCreating(false)}
             >
               取消
             </button>
             <button
-              className="flex-1 px-2 py-1 text-[11px] rounded-md bg-photon text-fiber hover:bg-[#D4B55C] transition-colors font-medium"
+              className="flex-1 px-2 py-1 text-[11px] rounded-md bg-photon text-on-accent hover:bg-photon/90 transition-colors font-medium"
               onClick={handleCreate}
               disabled={!newName.trim()}
             >

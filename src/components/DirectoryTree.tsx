@@ -21,7 +21,8 @@ import {
   type TreeRow,
 } from "../lib/dirTree";
 import { StarRating } from "./StarRating";
-import { ChevronRight, ChevronDown, FolderOpen, File, Loader2, Sparkles } from "lucide-react";
+import { ChevronRight, ChevronDown, FolderOpen, File, Loader2 } from "lucide-react";
+import { AiIcon } from "./ui/AiIcon";
 import gsap from "gsap";
 import { cn } from "../lib/utils";
 
@@ -44,16 +45,25 @@ interface Props {
 }
 
 /** 单行行高估计；AI 注释换行等多行情况由 measureElement 实测修正 */
-const ROW_ESTIMATE = 22;
+const ROW_ESTIMATE = 28;
 const LIST_PADDING = 8;
 
 const fetchFirstPage = (path: string) => getChildrenPage(path, 0, PAGE_SIZE);
 
 const GROUP_CLASS: Record<GroupPos, string> = {
   none: "",
-  first: "bg-photon/[0.04] border-x border-t border-[#FF6D00]/25 rounded-t-xl pt-0.5",
-  middle: "bg-photon/[0.04] border-x border-[#FF6D00]/25",
-  last: "bg-photon/[0.04] border-x border-b border-[#FF6D00]/25 rounded-b-xl pb-0.5",
+  first: "bg-photon/[0.04] border-x border-t border-photon/25 rounded-t-xl pt-0.5",
+  middle: "bg-photon/[0.04] border-x border-photon/25",
+  last: "bg-photon/[0.04] border-x border-b border-photon/25 rounded-b-xl pb-0.5",
+};
+
+// 表头与行共用的列宽：名称自适应，数字列固定右对齐，AI 注释按比例且有上限
+const COL = {
+  name: "flex-1 min-w-[200px]",
+  size: "w-20 text-right shrink-0",
+  num: "w-16 text-right shrink-0",
+  rating: "w-24 shrink-0 flex items-center justify-center",
+  note: "w-[30%] min-w-[160px] max-w-[460px] shrink-0",
 };
 
 export function DirectoryTree({
@@ -241,13 +251,13 @@ export function DirectoryTree({
     return (
       <div
         className={cn(
-          "tree-row-anim group flex items-center gap-1.5 px-1 py-0.5 cursor-pointer border-l-2 transition-all hover:bg-[#FFFFFF]/5",
+          "tree-row-anim group flex items-center gap-2 pr-2 min-h-[28px] py-1 cursor-pointer border-l-2 rounded-r transition-colors hover:bg-hover",
           isActive
             ? "border-photon bg-photon/10 text-textMain"
             : isSelected
               ? "border-photon bg-photon/5"
               : "border-transparent text-text-dim",
-          !isActive && hasAnalysis && !isSelected && "border-[#7B61FF]/30"
+          !isActive && hasAnalysis && !isSelected && "border-ai/40"
         )}
         style={{ paddingLeft: `${depth * 1.25 + 0.25}rem` }}
         onClick={() => !scanning && item.is_dir && handleDirClick(item.path)}
@@ -268,7 +278,7 @@ export function DirectoryTree({
           >
             {isSelected && (
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <polyline points="1.5,5 4,7.5 8.5,2" stroke="#ffffff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                <polyline points="1.5,5 4,7.5 8.5,2" stroke="var(--fl-on-accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             )}
           </div>
@@ -286,21 +296,24 @@ export function DirectoryTree({
                 : <ChevronRight className="w-3.5 h-3.5" />
             )
           ) : (
-            <span className="w-1 h-1 rounded-full bg-[#EAE6DF]/30" />
+            <span className="w-1 h-1 rounded-full bg-text-faint/50" />
           )}
         </span>
 
-        <div className="flex items-center gap-1.5 w-[15%] min-w-0 shrink-0">
+        <div className={cn("flex items-center gap-2", COL.name)}>
           {item.is_dir ? (
-            <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", node.expanded ? "text-photon" : "text-photon/70")} />
+            <FolderOpen className={cn("w-4 h-4 shrink-0", node.expanded ? "text-photon" : "text-[#E8A92E]")} />
           ) : (
-            <File className="w-3.5 h-3.5 shrink-0 text-border/70" />
+            <File className="w-4 h-4 shrink-0 text-text-faint" />
           )}
-          <span className={cn(
-            "break-all font-medium transition-colors group-hover:text-textMain text-[11px] leading-snug",
-            isActive ? "text-textMain font-semibold" : item.is_dir ? "text-photon" : "text-border",
-            isSelected && !isActive && "text-photon font-semibold"
-          )}>
+          <span
+            className={cn(
+              "truncate transition-colors group-hover:text-textMain text-[12.5px]",
+              isActive ? "text-textMain font-semibold" : "text-textMain",
+              isSelected && !isActive && "text-photon font-semibold"
+            )}
+            title={item.name}
+          >
             {item.name}
           </span>
           {pathTags?.get(item.path)?.map((ft) => (
@@ -323,33 +336,33 @@ export function DirectoryTree({
           ))}
         </div>
 
-        <span className="w-16 text-right shrink-0 font-mono text-[10px]">
+        <span className={cn(COL.size, "text-xs")}>
           {isScanning ? (
-            <span className="text-photon animate-pulse">扫描中...</span>
+            <span className="text-photon animate-pulse">扫描中</span>
           ) : (
             <span className="text-textMain">{formatSize(item.logical_size)}</span>
           )}
         </span>
 
-        <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
-          {!isScanning && item.is_dir ? formatNumber(item.files) : "-"}
+        <span className={cn(COL.num, "text-xs text-text-dim")}>
+          {!isScanning && item.is_dir ? formatNumber(item.files) : "–"}
         </span>
 
-        <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
-          {!isScanning && item.is_dir ? formatNumber(item.subdirs) : "-"}
+        <span className={cn(COL.num, "text-xs text-text-dim")}>
+          {!isScanning && item.is_dir ? formatNumber(item.subdirs) : "–"}
         </span>
 
-        <span className="w-14 text-right shrink-0 font-mono text-[11px] text-text-dim">
+        <span className={cn(COL.num, "text-xs text-text-dim")}>
           {!isScanning && `${pct.toFixed(1)}%`}
         </span>
 
-        <span className="w-28 shrink-0 flex items-center justify-center">
+        <span className={COL.rating}>
           {analyses?.get(item.path) && (
             <StarRating priority={analyses.get(item.path)!.priority} />
           )}
         </span>
 
-        <span className="flex-1 min-w-0 text-xs text-text-dim group-hover:text-textMain transition-colors whitespace-pre-wrap break-words leading-snug">
+        <span className={cn(COL.note, "text-xs text-text-dim group-hover:text-textMain transition-colors whitespace-pre-wrap break-words leading-snug")}>
           {analyses?.get(item.path)?.description ?? ""}
         </span>
       </div>
@@ -358,7 +371,7 @@ export function DirectoryTree({
 
   const renderMore = ({ parentPath, depth, remaining }: MoreRow) => (
     <div
-      className="flex items-center gap-1.5 px-1 py-0.5 font-mono text-[11px] text-text-dim"
+      className="flex items-center gap-2 min-h-[28px] py-1 text-xs text-text-dim"
       style={{ paddingLeft: `${depth * 1.25 + 0.25}rem` }}
     >
       <span className="w-4 shrink-0" />
@@ -377,48 +390,49 @@ export function DirectoryTree({
 
   if (!scanning && loading) {
     return (
-      <div className="h-full flex items-center justify-center text-photon font-mono text-sm gap-2 uppercase tracking-widest">
-        <Loader2 className="w-4 h-4 animate-spin" /> 加载中...
+      <div className="h-full flex items-center justify-center text-text-dim text-sm gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /> 加载中
       </div>
     );
   }
 
   if (!scanning && !rootPath) {
     return (
-      <div className="h-full flex items-center justify-center text-text-dim font-mono text-sm uppercase tracking-widest">
-        选择硬盘并开始扫描
+      <div className="h-full flex flex-col items-center justify-center gap-1 text-center">
+        <span className="text-sm text-textMain">还没有扫描数据</span>
+        <span className="text-xs text-text-dim">在上方选择一块磁盘，然后点「扫描」</span>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-fiber rounded-2xl border border-slate overflow-hidden shadow-2xl relative">
-      <div className="flex items-center gap-1.5 px-1 py-2 bg-abyss border-b border-slate shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-text-dim">
+    <div className="flex flex-col h-full bg-abyss rounded-lg border border-slate overflow-hidden relative">
+      <div className="flex items-center gap-2 pl-[calc(0.25rem+2px)] pr-2 h-9 border-b border-slate shrink-0 text-xs text-text-dim">
         {onSelect && !scanning && <span className="w-4 shrink-0" />}
         <span className="w-4 shrink-0" />
-        <span className="w-[15%] min-w-0 shrink-0">名称</span>
-        <span className="w-16 text-right shrink-0">大小</span>
-        <span className="w-14 text-right shrink-0">文件</span>
-        <span className="w-14 text-right shrink-0">目录</span>
-        <span className="w-14 text-right shrink-0">占比</span>
-        <span className="w-28 shrink-0 flex items-center justify-center">
+        <span className={COL.name}>名称</span>
+        <span className={COL.size}>大小</span>
+        <span className={COL.num}>文件</span>
+        <span className={COL.num}>目录</span>
+        <span className={COL.num}>占比</span>
+        <span className={COL.rating}>
           {onAnalyzeSelected && selected && selected.size > 0 ? (
             <button
-              className="px-2 py-0.5 rounded bg-[#7B61FF]/20 text-[#7B61FF] border border-[#7B61FF]/40 hover:bg-[#7B61FF]/30 transition-colors flex items-center gap-1"
+              className="px-2 py-0.5 rounded bg-ai/15 text-ai border border-ai/40 hover:bg-ai/25 transition-colors flex items-center gap-1"
               disabled={analyzing}
               onClick={onAnalyzeSelected}
             >
-              {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <AiIcon className="w-3 h-3" />}
               {analyzing ? "分析中" : `分析 (${selected.size})`}
             </button>
           ) : (
             "AI 分析"
           )}
         </span>
-        <span className="flex-1 min-w-0">AI 注释</span>
+        <span className={COL.note}>AI 注释</span>
       </div>
       {error && (
-        <div className="px-3 py-1 border-b border-slate shrink-0 font-mono text-[11px] text-danger flex items-center gap-2">
+        <div className="px-3 py-1 border-b border-slate shrink-0 text-[11px] text-danger flex items-center gap-2">
           <span className="flex-1 min-w-0 truncate" title={error}>{error}</span>
           <button className="text-text-dim hover:text-textMain" onClick={() => setError(null)}>×</button>
         </div>
@@ -444,8 +458,8 @@ export function DirectoryTree({
       </div>
 
       {pendingRemoveTag && onRemoveTag && (
-        <div className="absolute inset-0 bg-fiber/70 backdrop-blur-sm flex items-center justify-center z-10">
-          <div className="bg-abyss border border-slate rounded-xl shadow-2xl p-5 min-w-[260px] max-w-[340px] font-mono text-xs">
+        <div className="absolute inset-0 bg-fiber/70 flex items-center justify-center z-10">
+          <div className="bg-abyss border border-slate rounded-lg shadow-[var(--fl-shadow)] p-5 min-w-[260px] max-w-[340px] text-xs">
             <div className="text-textMain font-semibold mb-2">移除标签</div>
             <div className="text-text-dim mb-4 leading-relaxed">
               确定要移除标签{" "}
@@ -459,13 +473,13 @@ export function DirectoryTree({
             </div>
             <div className="flex gap-2 justify-end">
               <button
-                className="px-3 py-1.5 rounded-lg bg-slate text-text-dim hover:bg-[#333340] transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-slate text-text-dim hover:bg-hover transition-colors"
                 onClick={() => setPendingRemoveTag(null)}
               >
                 取消
               </button>
               <button
-                className="px-3 py-1.5 rounded-lg bg-[#E74C3C] text-white hover:bg-[#C0392B] transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-critical text-white hover:bg-critical/90 transition-colors"
                 onClick={() => {
                   onRemoveTag(pendingRemoveTag.path, pendingRemoveTag.tagId, pendingRemoveTag.isDir);
                   setPendingRemoveTag(null);

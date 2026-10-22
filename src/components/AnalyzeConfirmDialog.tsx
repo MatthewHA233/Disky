@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import type { AiAnalysis } from "../types";
 import { StarRating } from "./StarRating";
-import gsap from "gsap";
-import { AlertCircle, XCircle, FileType, CheckCircle2, FastForward } from "lucide-react";
+import { Dialog } from "./ui/Dialog";
+import { Button } from "./ui/Button";
 
 interface Props {
   duplicates: AiAnalysis[];
@@ -10,34 +10,17 @@ interface Props {
   onClose: () => void;
 }
 
+/** 重新分析前逐个确认：已经有结果的路径要不要用新的覆盖 */
 export function AnalyzeConfirmDialog({ duplicates, onConfirm, onClose }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [pathsToReplace, setPathsToReplace] = useState<string[]>([]);
-  const dialogRef = useRef<HTMLDivElement>(null);
 
+  // 没有冲突就直接继续，不弹窗
   useEffect(() => {
-    if (dialogRef.current) {
-      gsap.fromTo(dialogRef.current,
-        { opacity: 0, y: 30, scale: 0.95 },
-        { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "power3.out" }
-      );
-    }
-  }, []);
+    if (duplicates.length === 0) onConfirm([]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const closeDialog = () => {
-    if (dialogRef.current) {
-      gsap.to(dialogRef.current, {
-        opacity: 0, y: 20, scale: 0.95, duration: 0.3, ease: "power2.in", onComplete: onClose
-      });
-    } else {
-      onClose();
-    }
-  };
-
-  if (duplicates.length === 0) {
-    onConfirm([]);
-    return null;
-  }
+  if (duplicates.length === 0) return null;
 
   const current = duplicates[currentIndex];
   const remaining = duplicates.length - currentIndex;
@@ -45,124 +28,43 @@ export function AnalyzeConfirmDialog({ duplicates, onConfirm, onClose }: Props) 
   const advance = (replace: boolean) => {
     const next = replace ? [...pathsToReplace, current.path] : pathsToReplace;
     if (currentIndex + 1 >= duplicates.length) {
-      if (dialogRef.current) {
-        gsap.to(dialogRef.current, {
-          opacity: 0, y: 20, scale: 0.95, duration: 0.3, ease: "power2.in", onComplete: () => onConfirm(next)
-        });
-      } else {
-        onConfirm(next);
-      }
+      onConfirm(next);
     } else {
       setPathsToReplace(next);
       setCurrentIndex(currentIndex + 1);
     }
   };
 
-  const handleReplaceAll = () => {
-    const remainingPaths = duplicates.slice(currentIndex).map((d) => d.path);
-    const next = [...pathsToReplace, ...remainingPaths];
-    if (dialogRef.current) {
-      gsap.to(dialogRef.current, {
-        opacity: 0, y: 20, scale: 0.95, duration: 0.3, ease: "power2.in", onComplete: () => onConfirm(next)
-      });
-    } else {
-      onConfirm(next);
-    }
-  };
-
-  const handleSkipAll = () => {
-    if (dialogRef.current) {
-      gsap.to(dialogRef.current, {
-        opacity: 0, y: 20, scale: 0.95, duration: 0.3, ease: "power2.in", onComplete: () => onConfirm(pathsToReplace)
-      });
-    } else {
-      onConfirm(pathsToReplace);
-    }
-  };
+  const replaceAll = () => onConfirm([...pathsToReplace, ...duplicates.slice(currentIndex).map((d) => d.path)]);
+  const skipAll = () => onConfirm(pathsToReplace);
 
   return (
-    <div className="fixed inset-0 bg-fiber/80 backdrop-blur-md flex flex-col items-center justify-center z-[100]" onClick={closeDialog}>
-      <div
-        ref={dialogRef}
-        className="glass-panel w-full max-w-lg rounded-[2rem] overflow-hidden flex flex-col shadow-[0_20px_60px_-15px_rgba(0,0,0,0.8)]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-8 py-6 border-b border-slate flex items-center justify-between bg-abyss">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-photon" />
-            <h2 className="text-lg font-semibold text-textMain">已有分析结果</h2>
-          </div>
-          <button className="text-text-dim hover:text-textMain transition-colors" onClick={closeDialog}>
-            <XCircle className="w-6 h-6" />
-          </button>
-        </div>
-
-        <div className="p-8 flex flex-col gap-6">
-          <div className="flex items-center justify-between text-xs font-mono text-text-dim uppercase tracking-widest border-b border-slate/50 pb-2">
-            <span>冲突确认</span>
-            <span className="text-photon font-bold text-sm">{currentIndex + 1} / {duplicates.length}</span>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-col p-4 bg-[#0A0A12] border border-slate rounded-xl relative overflow-hidden group">
-              <FileType className="absolute -right-4 -top-4 w-24 h-24 text-photon opacity-5 group-hover:opacity-10 transition-opacity" />
-              <div className="text-xs font-mono text-text-dim mb-1">目标路径</div>
-              <div className="text-sm font-mono text-photon break-all">{current.path}</div>
-
-              <div className="mt-4 pt-4 border-t border-slate/50">
-                <div className="text-xs font-mono text-text-dim mb-2 uppercase">当前描述</div>
-                <div className="text-sm text-textMain mb-4">{current.description}</div>
-
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-mono text-text-dim uppercase">当前优先级</div>
-                  <div className="flex items-center gap-2">
-                    <StarRating priority={current.priority} />
-                    <span className="font-mono text-photon font-bold">{current.priority.toFixed(1)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="text-center text-sm font-medium text-textMain mt-2">
-            是否覆盖已有的分析结果？
-          </div>
-
-          <div className="flex flex-col gap-3 mt-4 pt-6 border-t border-slate/50">
-            <div className="flex justify-between gap-4">
-              <button
-                className="magnetic-btn flex-1 py-3 bg-abyss border border-slate text-text-dim hover:text-textMain hover:border-[var(--text-dim)] rounded-xl font-medium transition-colors"
-                onClick={() => advance(false)}
-              >
-                跳过
-              </button>
-              <button
-                className="magnetic-btn flex-1 py-3 bg-photon text-fiber rounded-xl font-bold hover:bg-[#D4B55C] flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(201,168,76,0.3)] transition-all"
-                onClick={() => advance(true)}
-              >
-                覆盖 <CheckCircle2 className="w-4 h-4" />
-              </button>
-            </div>
-
-            {remaining > 1 && (
-              <div className="flex justify-between gap-4 mt-2">
-                <button
-                  className="magnetic-btn text-xs font-mono text-text-dim hover:text-textMain transition-colors py-2 flex items-center gap-1 justify-center flex-1"
-                  onClick={handleSkipAll}
-                >
-                  <FastForward className="w-3 h-3" /> 全部跳过 ({remaining})
-                </button>
-                <button
-                  className="magnetic-btn text-xs font-mono text-photon hover:text-[#D4B55C] border border-photon/30 hover:bg-photon/10 transition-colors py-2 rounded-lg flex items-center gap-1 justify-center flex-1"
-                  onClick={handleReplaceAll}
-                >
-                  <CheckCircle2 className="w-3 h-3" /> 全部覆盖 ({remaining})
-                </button>
-              </div>
-            )}
-          </div>
+    <Dialog
+      title="这里已经分析过了"
+      subtitle={duplicates.length > 1 ? `第 ${currentIndex + 1} 个，共 ${duplicates.length} 个已有结果` : undefined}
+      onClose={onClose}
+      width="max-w-lg"
+      footer={<>
+        {remaining > 1 && (
+          <>
+            <Button variant="subtle" className="mr-auto px-2" onClick={skipAll}>其余都保留</Button>
+            <Button variant="subtle" className="px-2" onClick={replaceAll}>其余都重新分析</Button>
+          </>
+        )}
+        <Button onClick={() => advance(false)}>保留原结果</Button>
+        <Button variant="primary" onClick={() => advance(true)}>重新分析</Button>
+      </>}
+    >
+      <div className="rounded border border-slate bg-abyss p-3">
+        <div className="text-xs text-text-dim">位置</div>
+        <div className="mt-0.5 break-all">{current.path}</div>
+        <div className="mt-3 text-xs text-text-dim">原来的结论</div>
+        <div className="mt-0.5">{current.description}</div>
+        <div className="mt-3 flex items-center gap-2 text-xs text-text-dim">
+          清理优先级 <StarRating priority={current.priority} />
         </div>
       </div>
-    </div>
+      <p className="mt-3 text-text-dim">重新分析会用新的结论替换上面的内容。</p>
+    </Dialog>
   );
 }

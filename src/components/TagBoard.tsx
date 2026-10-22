@@ -137,10 +137,10 @@ export function TagBoard({
   );
 
   return (
-    <div className="flex flex-col h-full bg-fiber rounded-2xl border border-slate overflow-hidden shadow-2xl">
+    <div className="flex flex-col h-full bg-fiber rounded-lg border border-slate overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 bg-abyss border-b border-slate shrink-0">
-        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-dim flex-1">标签看板</span>
+        <span className="text-[13px] font-semibold flex-1">标签看板</span>
         <button
           className={cn("p-1 rounded transition-colors",
             managing ? "text-photon bg-photon/10" : "text-text-dim hover:text-textMain"
@@ -169,7 +169,7 @@ export function TagBoard({
                 <button
                   key={c}
                   className={cn("w-4 h-4 rounded-full border transition-transform",
-                    newColor === c ? "border-[#EEEEF0] scale-110" : "border-transparent"
+                    newColor === c ? "border-textMain scale-110" : "border-transparent"
                   )}
                   style={{ backgroundColor: c }}
                   onClick={() => setNewColor(c)}
@@ -177,7 +177,7 @@ export function TagBoard({
               ))}
             </div>
             <button
-              className="px-2 py-1 text-[11px] rounded-md bg-photon text-fiber hover:bg-[#D4B55C] transition-colors font-medium disabled:opacity-40"
+              className="px-2 py-1 text-[11px] rounded-md bg-photon text-on-accent hover:bg-photon/90 transition-colors font-medium disabled:opacity-40"
               onClick={handleCreate}
               disabled={!newName.trim()}
             >
@@ -208,7 +208,7 @@ export function TagBoard({
                   <span className="text-border">{tag.name}</span>
                 )}
                 {renamingId === tag.id ? (
-                  <button className="text-[#2ECC71] hover:text-[#27AE60] transition-colors" onClick={commitRename} title="确认">
+                  <button className="text-success hover:text-success/80 transition-colors" onClick={commitRename} title="确认">
                     <Check className="w-3 h-3" />
                   </button>
                 ) : (
@@ -243,9 +243,9 @@ export function TagBoard({
             将从 {tagFileCount(confirmDelete.id)} 个文件/文件夹中移除此标签，标签定义也会被删除。
           </div>
           <div className="flex gap-2">
-            <button className="px-3 py-1 text-[11px] rounded-md bg-slate text-text-dim hover:bg-[#333340] transition-colors" onClick={() => setConfirmDelete(null)}>取消</button>
+            <button className="px-3 py-1 text-[11px] rounded-md bg-slate text-text-dim hover:bg-hover transition-colors" onClick={() => setConfirmDelete(null)}>取消</button>
             <button
-              className="px-3 py-1 text-[11px] rounded-md bg-[#E74C3C] text-white hover:bg-[#C0392B] transition-colors"
+              className="px-3 py-1 text-[11px] rounded-md bg-critical text-white hover:bg-critical/90 transition-colors"
               onClick={() => { onDeleteTag(confirmDelete.id); setConfirmDelete(null); }}
             >确认删除</button>
           </div>
@@ -260,7 +260,7 @@ export function TagBoard({
           {emptyResult && <div className="text-[10px] text-danger mb-2">{emptyResult}</div>}
           <div className="flex gap-2">
             <button
-              className="px-3 py-1 text-[11px] rounded-md bg-slate text-text-dim hover:bg-[#333340] transition-colors"
+              className="px-3 py-1 text-[11px] rounded-md bg-slate text-text-dim hover:bg-hover transition-colors"
               disabled={emptyLoading}
               onClick={() => { setEmptyTarget(null); setEmptyResult(null); }}
             >取消</button>
@@ -270,7 +270,7 @@ export function TagBoard({
               onClick={() => handleEmptyFolder(false)}
             >永久清空</button>
             <button
-              className="px-3 py-1 text-[11px] rounded-md bg-[#E74C3C] text-white hover:bg-[#C0392B] transition-colors"
+              className="px-3 py-1 text-[11px] rounded-md bg-critical text-white hover:bg-critical/90 transition-colors"
               disabled={emptyLoading}
               onClick={() => handleEmptyFolder(true)}
             >{emptyLoading ? "处理中..." : `移至${TRASH_NAME}`}</button>
@@ -294,13 +294,13 @@ export function TagBoard({
               >
                 <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: tag.color }} />
                 <span className="text-[11px] font-semibold text-textMain truncate">{tag.name}</span>
-                <span className="text-[10px] text-[#555] ml-auto font-mono">{items.length}</span>
+                <span className="text-[10px] text-text-faint ml-auto">{items.length}</span>
               </div>
 
               {/* Column items */}
               <div className="flex-1 overflow-y-auto py-1.5 px-1.5 custom-scrollbar space-y-1.5">
                 {items.length === 0 ? (
-                  <div className="px-3 py-6 text-center text-[10px] text-[#555]">无标记文件</div>
+                  <div className="px-3 py-6 text-center text-[10px] text-text-faint">无标记文件</div>
                 ) : (
                   items.map((item) => {
                     const size = sizeMap.get(item.path);
@@ -308,7 +308,7 @@ export function TagBoard({
                     return (
                       <div
                         key={`${item.tag_id}-${item.path}`}
-                        className="group relative rounded-xl bg-abyss border border-slate hover:border-muted hover:bg-[#1A1A22] cursor-pointer transition-all"
+                        className="group relative rounded-lg bg-abyss border border-slate hover:border-[color:var(--fl-stroke-strong)] hover:bg-abyss cursor-pointer transition-all"
                         onClick={() => onNavigateToPath(item.path)}
                         onContextMenu={(e) => {
                           e.preventDefault();
@@ -329,7 +329,7 @@ export function TagBoard({
                           </div>
 
                           {/* Path */}
-                          <div className="mt-1 text-[10px] text-[#555] break-all leading-snug pl-5">
+                          <div className="mt-1 text-[10px] text-text-faint break-all leading-snug pl-5">
                             {item.path}
                           </div>
 
@@ -337,7 +337,7 @@ export function TagBoard({
                           {(size !== undefined || analysis) && (
                             <div className="mt-1.5 flex items-center gap-2 pl-5">
                               {size !== undefined && (
-                                <span className="text-[10px] text-text-dim font-mono">{formatSize(size)}</span>
+                                <span className="text-[10px] text-text-dim">{formatSize(size)}</span>
                               )}
                               {analysis && <StarRating priority={analysis.priority} maxStars={5} />}
                             </div>
@@ -354,7 +354,7 @@ export function TagBoard({
                         {/* Empty folder button (hover, dirs only) */}
                         {item.is_dir && (
                           <button
-                            className="absolute top-2 right-2 p-1 rounded-md text-[#555] hover:text-danger opacity-0 group-hover:opacity-100 transition-all hover:bg-danger/10"
+                            className="absolute top-2 right-2 p-1 rounded-md text-text-faint hover:text-danger opacity-0 group-hover:opacity-100 transition-all hover:bg-danger/10"
                             onClick={(e) => { e.stopPropagation(); setEmptyTarget(item); }}
                             title="清空文件夹"
                           >

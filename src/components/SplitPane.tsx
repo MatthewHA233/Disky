@@ -9,7 +9,7 @@ interface Props {
 const MIN_RATIO = 0.15;
 const MAX_RATIO = 0.85;
 
-export function SplitPane({ top, bottom, initialRatio = 0.5 }: Props) {
+export function SplitPane({ top, bottom, initialRatio = 0.55 }: Props) {
   const [ratio, setRatio] = useState(initialRatio);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
@@ -46,9 +46,14 @@ export function SplitPane({ top, bottom, initialRatio = 0.5 }: Props) {
         {top}
       </div>
       <div
-        className="flex-shrink-0 h-1.5 cursor-row-resize bg-fiber border-y border-slate hover:bg-slate transition-colors z-20"
+        className="group relative shrink-0 h-2 cursor-row-resize z-20"
         onMouseDown={onMouseDown}
-      />
+        role="separator"
+        aria-orientation="horizontal"
+        title="拖动调整上下比例"
+      >
+        <span className="absolute left-1/2 top-[3px] w-12 h-0.5 -ml-6 rounded-full bg-slate transition-colors group-hover:bg-photon" />
+      </div>
       <div className="relative overflow-hidden min-h-0" style={{ flex: 1 }}>
         {bottom}
       </div>

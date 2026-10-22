@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import {
   ExternalLink, Copy, FolderOpen, Terminal,
   RefreshCw, Info, FolderMinus, Move,
@@ -48,16 +48,23 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
   const [result, setResult] = useState<string | null>(null);
   const [showTagPicker, setShowTagPicker] = useState(false);
 
-  // Edge-detect positioning
+  // 贴边时往回收，保证整个菜单都在窗口内。用 offset 尺寸（不受入场缩放动画影响），
+  // 并在菜单内容变化（标签加载、切到确认 / 结果视图）后重新定位
   const [pos, setPos] = useState({ x, y });
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = menuRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const nx = x + rect.width > window.innerWidth ? window.innerWidth - rect.width - 8 : x;
-    const ny = y + rect.height > window.innerHeight ? window.innerHeight - rect.height - 8 : y;
-    setPos({ x: Math.max(4, nx), y: Math.max(4, ny) });
-  }, [x, y]);
+    const place = () => {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      const nx = x + w > window.innerWidth - 8 ? window.innerWidth - w - 8 : x;
+      const ny = y + h > window.innerHeight - 8 ? window.innerHeight - h - 8 : y;
+      setPos({ x: Math.max(4, nx), y: Math.max(4, ny) });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [x, y, confirm, result, showTagPicker]);
 
   // GSAP entrance
   useEffect(() => {
@@ -282,7 +289,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
     return (
       <div
         ref={menuRef}
-        className="fixed z-[9999] bg-abyss border border-slate rounded-xl shadow-2xl font-mono text-xs"
+        className="fixed z-[9999] bg-abyss border border-slate rounded-lg shadow-[var(--fl-shadow)] text-xs"
         style={{ left: pos.x, top: pos.y }}
       >
         <TagPicker
@@ -311,7 +318,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
     return (
       <div
         ref={menuRef}
-        className="fixed z-[9999] bg-abyss border border-slate rounded-xl shadow-2xl p-4 min-w-[260px] font-mono text-xs"
+        className="fixed z-[9999] bg-abyss border border-slate rounded-lg shadow-[var(--fl-shadow)] p-4 min-w-[260px] text-xs"
         style={{ left: pos.x, top: pos.y }}
       >
         <div className="text-textMain font-semibold mb-1">{cfg.title}</div>
@@ -321,7 +328,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
         )}
         <div className="flex gap-2">
           <button
-            className="px-3 py-1.5 rounded-lg bg-slate text-text-dim hover:bg-[#333340] transition-colors"
+            className="px-3 py-1.5 rounded-lg bg-slate text-text-dim hover:bg-hover transition-colors"
             disabled={loading}
             onClick={() => { setConfirm(null); setResult(null); }}
           >
@@ -340,8 +347,8 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
             className={cn(
               "px-3 py-1.5 rounded-lg transition-colors flex-1",
               cfg.danger
-                ? "bg-[#E74C3C] text-white hover:bg-[#C0392B]"
-                : "bg-photon text-fiber hover:bg-[#B89A3E]"
+                ? "bg-critical text-white hover:bg-critical/90"
+                : "bg-photon text-on-accent hover:bg-photon/90"
             )}
             disabled={loading}
             onClick={handleConfirmAction}
@@ -356,7 +363,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
   return (
     <div
       ref={menuRef}
-      className="fixed z-[9999] bg-abyss border border-slate rounded-xl shadow-2xl py-1.5 min-w-[240px] font-mono text-xs"
+      className="fixed z-[9999] bg-abyss border border-slate rounded-lg shadow-[var(--fl-shadow)] py-1.5 min-w-[240px] text-xs"
       style={{ left: pos.x, top: pos.y }}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -372,10 +379,10 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
                 className={cn(
                   "w-full flex items-center gap-3 px-3 py-1.5 text-left transition-colors",
                   mi.disabled
-                    ? "text-[#555] cursor-not-allowed"
+                    ? "text-text-faint cursor-not-allowed"
                     : mi.danger
                       ? "text-danger hover:bg-danger/10"
-                      : "text-border hover:bg-[#FFFFFF]/5"
+                      : "text-border hover:bg-hover"
                 )}
                 disabled={mi.disabled}
                 onClick={() => !mi.disabled && mi.action()}
@@ -383,7 +390,7 @@ export function ContextMenu({ entry, x, y, onClose, onDataChanged, onCleanupDone
                 <span className="w-4 flex justify-center shrink-0">{mi.icon}</span>
                 <span className="flex-1">{mi.label}</span>
                 {mi.shortcut && (
-                  <span className="text-[10px] text-[#555] shrink-0">{mi.shortcut}</span>
+                  <span className="text-[10px] text-text-faint shrink-0">{mi.shortcut}</span>
                 )}
               </button>
             );

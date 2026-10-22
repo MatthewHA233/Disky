@@ -1,64 +1,133 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
+/*
+ * 设计令牌：按 Microsoft Fluent 2（WinUI 3）公开规范取值，跟随系统浅色 / 深色。
+ * tailwind.config.js 里的 fiber / abyss / slate / photon 等颜色名都指向这里，
+ * 换主题只改这一处。
+ */
 @layer base {
   :root {
-    --bg: #0D0D12;
-    --surface: #13131A;
-    --border: #2A2A35;
-    --text: #FAF8F5;
-    --text-dim: #888899;
-    --accent: #C9A84C;
-    --accent-glow: rgba(201, 168, 76, 0.4);
+    color-scheme: light dark;
 
-    --dir-color: #C9A84C;
-    --file-color: #EAE6DF;
+    --fl-bg: #F3F3F3;            /* 应用底色（Mica 基色） */
+    --fl-layer: #FAFAFA;         /* 面板 / 卡片 */
+    --fl-card: #FFFFFF;          /* 浮层、对话框 */
+    --fl-stroke: #E3E3E3;        /* 描边、分隔、弱填充 */
+    --fl-stroke-strong: #C9C9C9;
+    --fl-hover: rgba(0, 0, 0, 0.0373);
+    --fl-press: rgba(0, 0, 0, 0.0241);
+    --fl-text: #1A1A1A;
+    --fl-text-2: #5F5F5F;
+    --fl-text-3: #8A8A8A;
+    --fl-accent: #005FB8;
+    --fl-on-accent: #FFFFFF;
+    --fl-danger: #C42B1C;
+    --fl-success: #0F7B0F;
+    --fl-caution: #9D5D00;
+    --fl-ai: #6B4FD8;
+    --fl-shadow: 0 8px 16px rgba(0, 0, 0, 0.14);
+    --fl-shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 21px rgba(0, 0, 0, 0.15);
+    --fl-smoke: rgba(0, 0, 0, 0.3);
+    --fl-scrollbar: rgba(0, 0, 0, 0.28);
 
-    --danger: #E74C3C;
-    --success: #4CAF50;
+    /* 旧变量名保留兼容 */
+    --bg: var(--fl-bg);
+    --surface: var(--fl-layer);
+    --border: var(--fl-stroke);
+    --text: var(--fl-text);
+    --text-dim: var(--fl-text-2);
+    --accent: var(--fl-accent);
+    --accent-glow: transparent;
+    --danger: var(--fl-danger);
+    --success: var(--fl-success);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fl-bg: #202020;
+      --fl-layer: #272727;
+      --fl-card: #2C2C2C;
+      --fl-stroke: #383838;
+      --fl-stroke-strong: #4A4A4A;
+      --fl-hover: rgba(255, 255, 255, 0.0605);
+      --fl-press: rgba(255, 255, 255, 0.0419);
+      --fl-text: #FFFFFF;
+      --fl-text-2: #C5C5C5;
+      --fl-text-3: #8C8C8C;
+      --fl-accent: #60CDFF;
+      --fl-on-accent: #000000;
+      --fl-danger: #FF99A4;
+      --fl-success: #6CCB5F;
+      --fl-caution: #FCB75A;
+      --fl-ai: #B5A3FF;
+      --fl-shadow: 0 8px 16px rgba(0, 0, 0, 0.26);
+      --fl-shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.37), 0 2px 21px rgba(0, 0, 0, 0.37);
+      --fl-smoke: rgba(0, 0, 0, 0.4);
+      --fl-scrollbar: rgba(255, 255, 255, 0.3);
+    }
   }
 }
 
 @layer utilities {
-  .text-shadow-glow {
-    text-shadow: 0 0 10px var(--accent-glow);
-  }
-
+  /* 对话框 / 浮层表面（Fluent：实色卡片 + 细描边 + 阴影，不做重度毛玻璃） */
   .glass-panel {
-    background-color: rgb(19 19 26 / 0.8);
-    backdrop-filter: blur(24px);
-    border: 1px solid #2A2A35;
-    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+    background-color: var(--fl-card);
+    border: 1px solid var(--fl-stroke);
+    box-shadow: var(--fl-shadow);
   }
 
+  .text-shadow-glow {
+    text-shadow: none;
+  }
+
+  /* Fluent 按钮不做缩放动效，只保留颜色过渡 */
   .magnetic-btn {
-    transition: transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  }
-
-  .magnetic-btn:active {
-    transform: scale(0.95);
-  }
-
-  .magnetic-btn:hover {
-    transform: scale(1.03) translateY(-1px);
+    transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
   }
 }
 
-/* Base resets & typography */
 body {
-  font-family: "Inter", system-ui, sans-serif;
-  background-color: var(--bg);
-  color: var(--text);
+  font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-variant-numeric: tabular-nums;
+  background-color: var(--fl-bg);
+  color: var(--fl-text);
+  -webkit-font-smoothing: antialiased;
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* Scrollbar styling for dark mode */
+code,
+pre,
+kbd {
+  font-family: "Cascadia Mono", Consolas, "JetBrains Mono", monospace;
+}
+
+:focus-visible {
+  outline: 2px solid var(--fl-text);
+  outline-offset: 1px;
+}
+
+/* 拖分隔条 / 拖格子期间：全局统一光标、禁止选中文字 */
+body.pointer-locked,
+body.pointer-locked * {
+  cursor: var(--drag-cursor) !important;
+  user-select: none !important;
+}
+
+/* 输入类控件自带聚焦样式（底边强调色），不再叠一圈焦点框 */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+/* 滚动条：细、圆角，跟随主题 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -66,17 +135,17 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2A2A35;
-  border-radius: 4px;
+  background: var(--fl-scrollbar);
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #C9A84C;
+  background-color: var(--fl-text-3);
 }
 
-/* Animations that are not easy to Tailwindify */
 @keyframes pulse-slow {
-
   0%,
   100% {
     opacity: 1;
@@ -91,6 +160,17 @@ body {
   animation: pulse-slow 2s ease-in-out infinite;
 }
 
+/* 未知进度的滑块：宽 1/3，从左外侧滑到右外侧 */
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(300%);
+  }
+}
+
 @keyframes shimmer {
   0% {
     transform: translateX(-100%);
@@ -101,17 +181,31 @@ body {
   }
 }
 
-/* Keep structural classes intact for TreeMap SVG and DirectoryTree logic */
-.split-handle {
-  flex-shrink: 0;
-  height: 6px;
-  cursor: row-resize;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  transition: background 0.2s;
+/* 对话框：遮罩淡入，面板从略大缩放到原尺寸（Fluent ContentDialog 的入场） */
+@keyframes smoke-in {
+  from {
+    opacity: 0;
+  }
 }
 
-.split-handle:hover {
-  background: var(--border);
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(1.05);
+  }
+}
+
+.smoke-in {
+  animation: smoke-in 167ms linear;
+}
+
+.dialog-in {
+  animation: dialog-in 250ms cubic-bezier(0, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smoke-in,
+  .dialog-in {
+    animation: none;
+  }
 }
