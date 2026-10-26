@@ -437,6 +437,7 @@ export default function App() {
               snapshots={scan.snapshots}
               onScan={scan.scanDrive}
               onOpen={(d) => { void scan.openSnapshot(d); }}
+              opening={scan.opening}
               onHistory={() => setDialog("history")}
             />
           ) : (

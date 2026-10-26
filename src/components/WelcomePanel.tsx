@@ -1,7 +1,7 @@
 import type { DriveInfo, SnapshotInfo } from "../types";
 import { formatSize, timeAgo } from "../lib/format";
 import { normalizePath } from "../lib/path";
-import { FolderOpen, HardDrive, History, Play, RotateCw } from "lucide-react";
+import { FolderOpen, HardDrive, History, Loader2, Play, RotateCw } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface Props {
@@ -10,6 +10,8 @@ interface Props {
   snapshots: SnapshotInfo[];
   onScan: (mount: string) => void;
   onOpen: (mount: string) => void;
+  /** 正在打开存下来的扫描的那块盘 */
+  opening: string | null;
   onHistory: () => void;
 }
 
@@ -17,7 +19,7 @@ interface Props {
 const LOW_SPACE = 0.1;
 
 /** 还没打开扫描结果时的首页：每块磁盘一张卡片。扫过的盘直接打开上次的结果，没扫过的点了就扫 */
-export function WelcomePanel({ drives, snapshots, onScan, onOpen, onHistory }: Props) {
+export function WelcomePanel({ drives, snapshots, onScan, onOpen, opening, onHistory }: Props) {
   const snapshotOf = (mount: string) => snapshots.find((s) => normalizePath(s.root).toLowerCase() === normalizePath(mount).toLowerCase());
   return (
     <div className="h-full overflow-auto grid place-items-center p-6">
@@ -38,19 +40,24 @@ export function WelcomePanel({ drives, snapshots, onScan, onOpen, onHistory }: P
               const ratio = d.total_space > 0 ? used / d.total_space : 0;
               const low = d.total_space > 0 && d.available_space / d.total_space < LOW_SPACE;
               const snap = snapshotOf(d.mount_point);
+              const isOpening = opening != null && normalizePath(opening).toLowerCase() === normalizePath(d.mount_point).toLowerCase();
               return (
                 <div key={d.mount_point} className="group relative rounded-lg bg-abyss border border-slate hover:bg-hover transition-colors">
                   <button
                     type="button"
                     className="w-full text-left p-4 rounded-lg active:bg-press"
                     title={snap ? "打开上次存下的扫描结果" : "扫描这块盘"}
+                    aria-busy={isOpening}
                     onClick={() => (snap ? onOpen(d.mount_point) : onScan(d.mount_point))}
                   >
                     <div className="flex items-center gap-2">
                       <HardDrive className="w-5 h-5 text-text-dim" />
                       <span className="text-sm font-semibold">{d.mount_point}</span>
-                      <span className="ml-auto flex items-center gap-1 text-xs text-photon opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-                        {snap ? <><FolderOpen className="w-3 h-3" />打开</> : <><Play className="w-3 h-3" />扫描</>}
+                      <span className={cn(
+                        "ml-auto flex items-center gap-1 text-xs text-photon transition-opacity",
+                        isOpening ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                      )}>
+                        {isOpening ? <><Loader2 className="w-3 h-3 animate-spin" />正在打开</> : snap ? <><FolderOpen className="w-3 h-3" />打开</> : <><Play className="w-3 h-3" />扫描</>}
                       </span>
                     </div>
                     <div className="mt-3 h-1.5 rounded-full bg-slate overflow-hidden">

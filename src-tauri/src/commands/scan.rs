@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::Disks;
@@ -32,6 +32,35 @@ struct ScanTreeEvent {
 
 /// Holds the in-memory scan tree.
 pub struct ScanState(pub Mutex<Option<ScanTree>>);
+
+/// 正在扫描：同一时间只扫一块盘（内存里只留一棵树，进度事件也不分盘）
+static SCANNING: AtomicBool = AtomicBool::new(false);
+/// 内存里那棵树换了几回：每开一次扫描、打开一次存下的扫描就加一。
+/// 打开存下的扫描要读好几秒，读完发现变了（中途开了扫描、又打开了别的盘），读出来的就不放进内存
+static TREE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn next_epoch() -> u64 {
+    TREE_EPOCH.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+pub(crate) fn epoch() -> u64 {
+    TREE_EPOCH.load(Ordering::SeqCst)
+}
+
+/// 扫描期间拿着；扫完（或出错）放掉
+struct Scanning;
+
+impl Scanning {
+    fn begin() -> Option<Self> {
+        SCANNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).ok().map(|_| Scanning)
+    }
+}
+
+impl Drop for Scanning {
+    fn drop(&mut self) {
+        SCANNING.store(false, Ordering::SeqCst);
+    }
+}
 
 /// 单页子项上限：虚拟列表按需翻页，单次 IPC 不必传整个超大目录。
 const MAX_PAGE_SIZE: usize = 5000;
@@ -100,6 +129,8 @@ pub async fn scan_disk(
     path: String,
     state: State<'_, ScanState>,
 ) -> Result<u64, String> {
+    let _scanning = Scanning::begin().ok_or("已经在扫描了，等这次扫完再扫")?;
+    next_epoch();
     let progress = Arc::new(ScanProgress::default());
 
     let norm = normalize_path(&path);
@@ -193,7 +224,10 @@ pub async fn scan_disk(
     let root = tree.root_path().to_string();
     *state.0.lock().map_err(|e| e.to_string())? = Some(tree);
     if let (Some(blob), Ok(dir)) = (snapshot_blob, super::snapshot::snapshot_dir(&app)) {
+        // 写完之前打开这块盘存下的扫描会等着，免得读到上一次的
+        let saving = super::snapshot::saving(&dir, &root);
         tokio::task::spawn_blocking(move || {
+            let _saving = saving;
             if let Err(e) = super::snapshot::save_blob(&dir, &root, scanned_at, &blob) {
                 eprintln!("{e}");
             }
@@ -245,4 +279,18 @@ fn children_page(
 
 pub(crate) fn normalize(p: &str) -> String {
     normalize_path(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_one_scan_at_a_time() {
+        let first = Scanning::begin();
+        assert!(first.is_some());
+        assert!(Scanning::begin().is_none(), "扫着的时候不能再开一次");
+        drop(first);
+        assert!(Scanning::begin().is_some(), "扫完就能再扫");
+    }
 }

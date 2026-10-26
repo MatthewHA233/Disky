@@ -43,6 +43,8 @@ export interface ScanSession {
   restoredAt: number | null;
   /** 打开某块盘存下来的扫描 */
   openSnapshot: (drive: string) => Promise<void>;
+  /** 正在打开存下来的扫描的那块盘（C 盘那份要读好几秒） */
+  opening: string | null;
 }
 
 export function useScanSession(): ScanSession {
@@ -57,6 +59,7 @@ export function useScanSession(): ScanSession {
   const [liveUpdateTick, setLiveUpdateTick] = useState(0);
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
   const [restoredAt, setRestoredAt] = useState<number | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
   const snapshotsRef = useRef<SnapshotInfo[]>([]);
   snapshotsRef.current = snapshots;
   useEffect(() => { listSnapshots().then(setSnapshots).catch(() => {}); }, []);
@@ -65,6 +68,17 @@ export function useScanSession(): ScanSession {
   const unlistenTreeRef = useRef<UnlistenFn | null>(null);
   const unlistenLiveRef = useRef<UnlistenFn | null>(null);
   const skipResetRef = useRef(false);
+  // 同一时间只扫一块盘：后端只留一棵树，进度事件也不分盘
+  const scanningRef = useRef<string | null>(null);
+  // 开扫、切盘、打开存下的扫描都换一个号。打开要读好几秒，读完号变了说明已经在做别的，读出来的不用了
+  const genRef = useRef(0);
+  const selectedDriveRef = useRef<string | null>(null);
+  selectedDriveRef.current = selectedDrive;
+  const supersede = useCallback(() => {
+    genRef.current += 1;
+    setOpening(null);
+    return genRef.current;
+  }, []);
 
   // Per-drive state cache
   const cacheRef = useRef<Map<string, DriveSnapshot>>(new Map());
@@ -101,6 +115,8 @@ export function useScanSession(): ScanSession {
       prevDriveRef.current = selectedDrive;
       return;
     }
+    // 换盘了：还在读的存档不要了
+    supersede();
 
     const prev = prevDriveRef.current;
 
@@ -151,7 +167,10 @@ export function useScanSession(): ScanSession {
   }, [selectedDrive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startScan = useCallback(async () => {
-    if (!selectedDrive || status === "scanning") return;
+    if (!selectedDrive || scanningRef.current) return;
+    const drive = selectedDrive;
+    scanningRef.current = drive;
+    supersede();
 
     setStatus("scanning");
     setProgress(null);
@@ -166,26 +185,26 @@ export function useScanSession(): ScanSession {
     unlistenProgressRef.current?.();
     unlistenTreeRef.current?.();
 
-    // Listen for scan-progress events
-    unlistenProgressRef.current = await listen<ScanProgressEvent>(
-      "scan-progress",
-      (event) => {
-        setProgress(event.payload);
-      }
-    );
-
-    // Listen for scan-tree events (live children updates)
-    unlistenTreeRef.current = await listen<ScanTreeEvent>(
-      "scan-tree",
-      (event) => {
-        setLiveChildren(event.payload.children);
-        setCurrentDir(event.payload.current_dir);
-      }
-    );
-
     try {
-      await scanDisk(selectedDrive);
-      const newRootPath = normalizePath(selectedDrive);
+      // Listen for scan-progress events
+      unlistenProgressRef.current = await listen<ScanProgressEvent>(
+        "scan-progress",
+        (event) => {
+          setProgress(event.payload);
+        }
+      );
+
+      // Listen for scan-tree events (live children updates)
+      unlistenTreeRef.current = await listen<ScanTreeEvent>(
+        "scan-tree",
+        (event) => {
+          setLiveChildren(event.payload.children);
+          setCurrentDir(event.payload.current_dir);
+        }
+      );
+
+      await scanDisk(drive);
+      const newRootPath = normalizePath(drive);
       loadedRootRef.current = newRootPath;
       setStatus("done");
       setRootPath(newRootPath);
@@ -201,7 +220,7 @@ export function useScanSession(): ScanSession {
       setCurrentDir("");
 
       // Update cache immediately after scan completes
-      cacheRef.current.set(selectedDrive, {
+      cacheRef.current.set(drive, {
         status: "done",
         progress: null,
         liveChildren: [],  // will be set by the state already
@@ -224,21 +243,22 @@ export function useScanSession(): ScanSession {
       unlistenProgressRef.current = null;
       unlistenTreeRef.current?.();
       unlistenTreeRef.current = null;
+      scanningRef.current = null;
     }
-  }, [selectedDrive, status]);
+  }, [selectedDrive, supersede]);
 
   // 切换磁盘会触发上面的「恢复/重置」effect，所以先切盘、等那个 effect 跑完再开扫，
   // 否则刚设的 scanning 状态会被重置回 idle
   const pendingScanRef = useRef<string | null>(null);
   const scanDrive = useCallback((drive: string) => {
-    if (status === "scanning") return;
+    if (scanningRef.current) return;
     if (drive === selectedDrive) {
       startScan();
       return;
     }
     pendingScanRef.current = drive;
     setSelectedDriveRaw(drive);
-  }, [selectedDrive, status, startScan]);
+  }, [selectedDrive, startScan]);
 
   useEffect(() => {
     if (pendingScanRef.current && pendingScanRef.current === selectedDrive) {
@@ -254,10 +274,14 @@ export function useScanSession(): ScanSession {
   // 打开存下来的扫描：后端把它放进内存当作当前的树，前端和扫完一样显示，并接着监听变化
   const openSnapshotRef = useRef<((drive: string) => Promise<void>) | null>(null);
   const openSnapshot = useCallback(async (drive: string) => {
-    if (status === "scanning") return;
+    if (scanningRef.current) return;
+    const gen = supersede();
+    setOpening(drive);
     try {
       const res = await loadSnapshot(normalizePath(drive));
-      if (!sameRoot(drive, selectedDrive ?? "")) skipResetRef.current = true;
+      if (genRef.current !== gen) return;
+      setOpening(null);
+      if (!sameRoot(drive, selectedDriveRef.current ?? "")) skipResetRef.current = true;
       loadedRootRef.current = res.root_path;
       setSelectedDriveRaw(drive);
       setStatus("done");
@@ -274,10 +298,12 @@ export function useScanSession(): ScanSession {
       });
       startWatch(res.root_path).catch(() => {});
     } catch (e) {
+      if (genRef.current !== gen) return;
+      setOpening(null);
       setStatus("error");
       setErrorMsg(`没能打开上次的扫描：${String(e)}`);
     }
-  }, [status, selectedDrive]);
+  }, [supersede]);
   openSnapshotRef.current = openSnapshot;
 
   const loadFromHistory = useCallback((root: string, children: DirEntry[]) => {
@@ -316,5 +342,6 @@ export function useScanSession(): ScanSession {
     snapshots,
     restoredAt,
     openSnapshot,
+    opening,
   };
 }

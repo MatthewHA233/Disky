@@ -6,6 +6,8 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -16,6 +18,12 @@ use crate::scanner::{DirEntry, ScanTree, ROOT};
 
 const MAGIC: &[u8; 4] = b"DSKS";
 const VERSION: u32 = 1;
+/// 打开时最多等后台写完多久（压缩 C 盘那份一般几秒）
+const SAVE_WAIT: Duration = Duration::from_secs(60);
+
+/// 正在后台写的快照文件。扫完马上又打开同一块盘时等它写完再读，免得读到上一次的
+static SAVING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+static SAVED: Condvar = Condvar::new();
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SnapshotInfo {
@@ -41,6 +49,30 @@ fn file_for(dir: &Path, root: &str) -> PathBuf {
     let key: String = root.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
     let key = key.trim_matches('_');
     dir.join(format!("{}.bin", if key.is_empty() { "root" } else { key }))
+}
+
+/// 记上这块盘的快照正在写；交回来的东西放掉（写完或写失败）时去掉
+pub struct Saving(PathBuf);
+
+pub fn saving(dir: &Path, root: &str) -> Saving {
+    let file = file_for(dir, root);
+    SAVING.lock().unwrap_or_else(|e| e.into_inner()).push(file.clone());
+    Saving(file)
+}
+
+impl Drop for Saving {
+    fn drop(&mut self) {
+        let mut list = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = list.iter().position(|f| *f == self.0) {
+            list.swap_remove(i);
+        }
+        SAVED.notify_all();
+    }
+}
+
+fn wait_saved(file: &Path) {
+    let list = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = SAVED.wait_timeout_while(list, SAVE_WAIT, |l| l.iter().any(|f| f == file));
 }
 
 /// 已经编码好的树压缩写盘：先写临时文件再改名，写到一半断电也不会坏掉旧的那份
@@ -99,7 +131,9 @@ pub fn list(dir: &Path) -> Vec<SnapshotInfo> {
 
 /// 读出某块盘的快照：(扫描时间, 树)
 pub fn load(dir: &Path, root: &str) -> Result<(i64, ScanTree), String> {
-    let mut file = std::io::BufReader::new(std::fs::File::open(file_for(dir, root)).map_err(|_| "这块盘还没有存下的扫描".to_string())?);
+    let path = file_for(dir, root);
+    wait_saved(&path);
+    let mut file = std::io::BufReader::new(std::fs::File::open(&path).map_err(|_| "这块盘还没有存下的扫描".to_string())?);
     let (_, scanned_at) = read_header(&mut file).ok_or("扫描快照的格式不对，重新扫描一次就好")?;
     let mut blob = Vec::new();
     flate2::read::DeflateDecoder::new(file).read_to_end(&mut blob).map_err(|e| format!("扫描快照读不出来: {e}"))?;
@@ -115,10 +149,16 @@ pub fn list_snapshots(app: AppHandle) -> Result<Vec<SnapshotInfo>, String> {
 #[tauri::command]
 pub async fn load_snapshot(app: AppHandle, root: String, state: State<'_, ScanState>) -> Result<LoadSnapshotResult, String> {
     let dir = snapshot_dir(&app)?;
+    let mine = super::scan::next_epoch();
     let (scanned_at, tree) = tokio::task::spawn_blocking(move || load(&dir, &root)).await.map_err(|e| e.to_string())??;
     let (_, children) = tree.child_entries(ROOT, 0, usize::MAX);
     let root_path = tree.root_path().to_string();
-    *state.0.lock().map_err(|e| e.to_string())? = Some(tree);
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    // 读的这几秒里开始了扫描、或者又打开了别的盘：读出来的不用了，别盖掉
+    if super::scan::epoch() != mine {
+        return Err("已经换成别的扫描结果了".into());
+    }
+    *guard = Some(tree);
     Ok(LoadSnapshotResult { root_path, children, scanned_at })
 }
 
@@ -135,7 +175,9 @@ pub async fn save_snapshot(app: AppHandle, state: State<'_, ScanState>) -> Resul
         (tree.root_path().to_string(), tree.encode())
     };
     let dir = snapshot_dir(&app)?;
+    let saving = saving(&dir, &root);
     tokio::task::spawn_blocking(move || {
+        let _saving = saving;
         let scanned_at = list(&dir).into_iter().find(|s| s.root.eq_ignore_ascii_case(&root)).map_or_else(super::archive::now_secs, |s| s.scanned_at);
         save_blob(&dir, &root, scanned_at, &blob)
     })
@@ -164,6 +206,29 @@ mod tests {
         assert!(load(&store, "D:").is_err(), "没存过的盘");
         std::fs::write(store.join("D.bin"), b"garbage").unwrap();
         assert_eq!(list(&store).len(), 1, "坏文件不列");
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn opening_waits_for_a_save_in_progress() {
+        let base = std::env::temp_dir().join(format!("disky-snapshot-wait-{}", std::process::id()));
+        let data = base.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("a.txt"), vec![7u8; 4096]).unwrap();
+        let tree = scan_tree_progressive(&data.to_string_lossy(), &ScanProgress::default(), |_| {});
+        let store = base.join("snapshots");
+        save_blob(&store, "C:", 1, &tree.encode()).unwrap();
+        // 刚扫完：新的那份还在后台写
+        let pending = saving(&store, "C:\\");
+        let (store2, blob) = (store.clone(), tree.encode());
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            save_blob(&store2, "C:", 2, &blob).unwrap();
+            drop(pending);
+        });
+        let (at, _) = load(&store, "C:").unwrap();
+        assert_eq!(at, 2, "等写完读到的是这次扫的");
+        writer.join().unwrap();
         std::fs::remove_dir_all(&base).unwrap();
     }
 }
