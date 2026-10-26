@@ -171,7 +171,7 @@ impl Toolbox {
             ToolSpec { name: "installed_apps", description: "查系统登记的已安装软件（卸载信息里的名字、发行商、安装位置）。", schema: query },
             ToolSpec {
                 name: "record",
-                description: "记下一条结论：某个位置属于哪个软件的哪种成分。",
+                description: "记下一条结论：某个位置属于哪个软件的哪种成分。位置正好是另一个软件条目自己的文件夹时，那个条目整个并进 app_key 指的软件。",
                 schema: json!({
                     "type": "object",
                     "properties": {

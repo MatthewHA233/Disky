@@ -412,6 +412,55 @@ fn overrides_win_over_rules() {
 }
 
 #[test]
+fn claiming_an_items_own_folder_merges_the_whole_item() {
+    // 软件改名重装：旧目录 SOLO LEVELING SYSTEM 里没有 exe 了，AppData 里按旧名找到的数据还挂在旧条目上
+    let c = vec![
+        e("C:\\Users", 2 * GB, N, &[]),
+        e("C:\\Users\\me", 2 * GB, N, &[]),
+        e("C:\\Users\\me\\AppData", GB, N, &[]),
+        e("C:\\Users\\me\\AppData\\Local", GB, N, &[]),
+        e("C:\\Users\\me\\AppData\\Local\\solevup", 300 * MB, N, &[]),
+        e("C:\\Users\\me\\AppData\\Local\\solo-leveling-system", 150 * MB, N, &[]),
+        e("C:\\Users\\me\\AppData\\Local\\leftover", 50 * MB, N, &[]),
+    ];
+    let d = vec![
+        e("D:\\Program Files", GB, 1, &[]),
+        e("D:\\Program Files\\Solevup", 240 * MB, 0, &["Solevup.exe"]),
+        e("D:\\Program Files\\SOLO LEVELING SYSTEM", 40 * MB, N, &[]),
+        e("D:\\Program Files\\SOLO LEVELING SYSTEM\\E", 40 * MB, N, &[]),
+    ];
+    let digests = vec![
+        DriveDigest { version: 1, root: "C:".into(), scanned_at: 1, total: 10 * GB, modified_at: 1, entries: c },
+        DriveDigest { version: 1, root: "D:".into(), scanned_at: 1, total: 10 * GB, modified_at: 1, entries: d },
+    ];
+    let before = build(&digests, &[], &env(), &[]);
+    let old = app(&before, "SOLO LEVELING SYSTEM");
+    part(old, "C:\\Users\\me\\AppData\\Local\\solo-leveling-system");
+    let (solevup, old_key) = (app(&before, "Solevup").key.clone(), old.key.clone());
+
+    let ov = |path: &str, key: &str| Override {
+        path: path.into(),
+        app_key: Some(key.into()),
+        kind: Kind::Data,
+        origin: "ai".into(),
+        reason: "旧版留下的".into(),
+    };
+    let inv = build(&digests, &[], &env(), &[
+        // 记录里的大小写和磁盘上不一样
+        ov("D:\\Program Files\\solo leveling system", &solevup),
+        // 之后还有指向旧条目的记录：跟着并过去
+        ov("C:\\Users\\me\\AppData\\Local\\leftover", &old_key),
+    ]);
+    assert!(inv.apps.iter().all(|a| a.name != "SOLO LEVELING SYSTEM"), "旧条目整个并进去，不再单列");
+    let s = app(&inv, "Solevup");
+    let folder = part(s, "D:\\Program Files\\SOLO LEVELING SYSTEM");
+    assert_eq!((folder.kind, folder.origin.as_deref()), (Kind::Data, Some("ai")));
+    assert_eq!(part(s, "C:\\Users\\me\\AppData\\Local\\solo-leveling-system").kind, Kind::Data);
+    part(s, "C:\\Users\\me\\AppData\\Local\\leftover");
+    assert!(!s.uninstalled);
+}
+
+#[test]
 fn unclaimed_tree_keeps_only_unknown_space() {
     let inv = run();
     let d = inv.tree.iter().find(|n| n.path == "D:").unwrap();

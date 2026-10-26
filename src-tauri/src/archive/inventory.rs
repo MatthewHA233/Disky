@@ -277,6 +277,8 @@ struct Builder<'a> {
     no_cache: HashSet<String>,
     /// 用户 / AI 指定过归属的位置（小写）：找缓存时不再按名字改认
     pinned: HashSet<String>,
+    /// 按用户 / AI 指定并进别的软件的条目：key → 并进去的软件下标
+    merged: HashMap<String, usize>,
     system_root: Option<String>,
     /// 小写
     temp_dirs: Vec<String>,
@@ -302,6 +304,7 @@ impl<'a> Builder<'a> {
             installed_names: Vec::new(),
             no_cache: HashSet::new(),
             pinned: HashSet::new(),
+            merged: HashMap::new(),
             system_root: None,
             temp_dirs: Vec::new(),
         }
