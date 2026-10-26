@@ -102,7 +102,7 @@ mod tests {
             parts,
         };
         let inv = Inventory {
-            drives: vec![DriveInfo { root: "C:".into(), scanned_at: 2, total: 1 << 40 }],
+            drives: vec![DriveInfo { root: "C:".into(), scanned_at: 2, total: 1 << 40, live: false }],
             apps: vec![
                 // 外层 Steam 长了 3 GB，里面的 htmlcache 不重复算
                 app("app:steam", vec![part("C:\\Steam", 0), part("C:\\Steam\\htmlcache", 0)]),

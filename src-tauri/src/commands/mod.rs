@@ -1,6 +1,7 @@
 pub mod scan;
 pub mod snapshot;
 pub mod archive;
+pub mod archive_live;
 pub mod cleanup;
 pub mod history;
 pub mod ai;

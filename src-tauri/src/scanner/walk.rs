@@ -102,10 +102,10 @@ thread_local! {
 // Lightweight entry parsed from the OS buffer
 // ---------------------------------------------------------------------------
 
-struct RawEntry {
-    name: String,
-    size: u64,
-    is_dir: bool,
+pub(crate) struct RawEntry {
+    pub(crate) name: String,
+    pub(crate) size: u64,
+    pub(crate) is_dir: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ struct RawEntry {
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
-fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
+pub(crate) fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
     use win32::*;
 
     // Drive roots like "C:" need a trailing backslash for CreateFileW
@@ -212,7 +212,7 @@ fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
 /// Unix 实现：readdir + lstat。跳过符号链接（对应 Windows 跳过 reparse point），
 /// 避免循环引用与重复计数。
 #[cfg(unix)]
-fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
+pub(crate) fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
     let rd = match std::fs::read_dir(dir_path) {
         Ok(r) => r,
         Err(_) => return Vec::new(), // 无权限/已删除 — 与 Windows 行为一致，静默跳过
@@ -250,7 +250,7 @@ fn enumerate_dir(dir_path: &str) -> Vec<RawEntry> {
 /// - /Volumes：其他磁盘的挂载点（应单独扫描）；/dev：设备文件系统
 /// VM（swap/休眠）、Update 本体大小真实，照常纳入统计。
 #[cfg(target_os = "macos")]
-fn should_skip_dir(path: &str) -> bool {
+pub(crate) fn should_skip_dir(path: &str) -> bool {
     matches!(
         path,
         "/System/Volumes/Data"
@@ -266,12 +266,12 @@ fn should_skip_dir(path: &str) -> bool {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn should_skip_dir(path: &str) -> bool {
+pub(crate) fn should_skip_dir(path: &str) -> bool {
     matches!(path, "/proc" | "/sys" | "/dev" | "/run")
 }
 
 #[cfg(windows)]
-fn should_skip_dir(_path: &str) -> bool {
+pub(crate) fn should_skip_dir(_path: &str) -> bool {
     false
 }
 

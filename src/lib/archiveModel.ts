@@ -215,6 +215,7 @@ export interface DriveStat {
   root: string;
   total: number;
   scannedAt: number;
+  live: boolean;
   organized: number;
   byCategory: Record<ArchiveCategory, number>;
 }
@@ -253,7 +254,7 @@ const zero = (): Record<ArchiveCategory, number> => ({ software: 0, personal: 0,
 export function computeStats(
   ix: ArchiveIndex,
   sizes: Map<string, number>,
-  drives: { root: string; total: number; scanned_at: number }[],
+  drives: { root: string; total: number; scanned_at: number; live?: boolean }[],
   driveOf: (path: string) => string,
 ): ArchiveStats {
   const boxes = new Map<string, BoxContent>(ix.boxes.map((b) => [b.id, { items: [], size: 0, junk: 0 }]));
@@ -261,7 +262,7 @@ export function computeStats(
   const byCategory = zero();
   const inbox: ArchiveStats["inbox"] = { software: [], devenv: [] };
   const driveStats = new Map<string, DriveStat>(
-    drives.map((d) => [driveOf(d.root), { root: d.root, total: d.total, scannedAt: d.scanned_at, organized: 0, byCategory: zero() }]),
+    drives.map((d) => [driveOf(d.root), { root: d.root, total: d.total, scannedAt: d.scanned_at, live: d.live ?? false, organized: 0, byCategory: zero() }]),
   );
   const addDrive = (path: string, cat: ArchiveCategory, size: number) => {
     const d = driveStats.get(driveOf(path));

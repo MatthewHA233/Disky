@@ -106,6 +106,8 @@ pub struct DriveInfo {
     pub root: String,
     pub scanned_at: i64,
     pub total: u64,
+    /// 扫描之后的变化在实时跟进（外接盘不盯）
+    pub live: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1364,7 +1366,7 @@ impl<'a> Builder<'a> {
             .collect();
 
         Inventory {
-            drives: digests.iter().map(|d| DriveInfo { root: d.root.clone(), scanned_at: d.scanned_at, total: d.total }).collect(),
+            drives: digests.iter().map(|d| DriveInfo { root: d.root.clone(), scanned_at: d.scanned_at, total: d.total, live: false }).collect(),
             apps,
             tree,
         }

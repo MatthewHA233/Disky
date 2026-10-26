@@ -328,6 +328,8 @@ export interface ArchiveDrive {
   /** Unix 秒 */
   scanned_at: number;
   total: number;
+  /** 扫描之后的变化在实时跟进（外接盘不盯） */
+  live: boolean;
 }
 
 export interface ArchiveBoxRow {

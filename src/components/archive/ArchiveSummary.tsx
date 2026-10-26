@@ -102,6 +102,7 @@ export function ArchiveSummary({
             </div>
             <span className="text-xs text-text-dim whitespace-nowrap">
               <b className="font-semibold text-textMain">{pct(d.organized, d.total)}%</b> · {formatSize(d.organized)} / {formatSize(d.total)} · {ago(d.scannedAt)}
+              {d.live && <span title="扫描之后新建、删除、变大变小的，几秒内自动更新到这里，不用重扫">，之后实时更新</span>}
             </span>
           </div>
         ))}

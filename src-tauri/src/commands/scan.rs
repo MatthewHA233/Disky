@@ -131,6 +131,8 @@ pub async fn scan_disk(
 
     let digest_dir = super::archive::digest_dir(&app).ok();
     let scanned_at = super::archive::now_secs();
+    // 整盘扫描：一开始就盯着这块盘，扫描期间的变化先攒着，等新摘要存好（函数返回时）再按它重数
+    let _pause = digest::is_volume_root(&norm).then(|| super::archive_live::scan_begin(&app, &norm));
     let (tree, snapshot_blob) = {
         let norm = norm.clone();
         let progress = progress.clone();

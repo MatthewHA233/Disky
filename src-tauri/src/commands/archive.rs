@@ -79,9 +79,10 @@ pub async fn get_archive(app: AppHandle) -> Result<ArchiveModel, String> {
         let conn = db(&app)?;
         let inv = inventory::build(&digests, &installed, &Env::current(), &overrides(store::claims(&conn)?));
         let growth = growth::compute(&inv, &digests, &digest::load_prev_all(&digest_dir(&app)?));
+        let live = super::archive_live::watched(&app);
         Ok(ArchiveModel {
             growth,
-            drives: inv.drives,
+            drives: inv.drives.into_iter().map(|d| DriveInfo { live: live.contains(&d.root), ..d }).collect(),
             apps: inv.apps,
             tree: inv.tree,
             boxes: store::boxes(&conn)?,
@@ -179,7 +180,8 @@ pub async fn archive_icons(app: AppHandle, sources: Vec<String>) -> Result<Vec<O
 #[tauri::command]
 pub async fn archive_forget(app: AppHandle, items: Vec<(String, u64)>) -> Result<(), String> {
     let dir = digest_dir(&app)?;
-    tokio::task::spawn_blocking(move || digest::forget_paths(&dir, &items))
+    let live = super::archive_live::watched(&app);
+    tokio::task::spawn_blocking(move || digest::forget_paths(&dir, &items, &live))
         .await
         .map_err(|e| e.to_string())?
 }

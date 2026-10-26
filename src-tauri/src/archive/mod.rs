@@ -7,10 +7,12 @@
 //! - `icons`：从 exe 提取图标
 //! - `growth`：和上次扫描比，软件、文件夹变大还是变小了多少
 //! - `exe_info`：读 exe 的厂商、产品名（给 AI 查归属用）
+//! - `fswatch`：盯住整块盘的变化（档案馆实时更新用）
 //! - `store`：箱子与装箱结果
 
 pub mod digest;
 pub mod exe_info;
+pub mod fswatch;
 pub mod growth;
 pub mod icons;
 pub mod inventory;

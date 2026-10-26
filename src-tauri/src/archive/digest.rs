@@ -5,7 +5,10 @@
 //! 一块盘几千到两三万条，几 MB 以内。
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use crate::scanner::classify::is_cache_name;
 use crate::scanner::{is_strict_ancestor, join_path, NodeId, ScanTree, ROOT};
@@ -23,6 +26,9 @@ const MAX_FILE_DEPTH: u8 = 3;
 /// 每个目录最多记几个 exe 名（找图标、判断软件是否已卸载用）
 const MAX_EXES: usize = 6;
 const VERSION: u32 = 3;
+
+mod live;
+pub use live::{exists, measure, Change, LayerCache, Remeasure, Unit};
 
 /// 子树里没有 exe
 pub const NO_EXE: u8 = u8::MAX;
@@ -58,7 +64,7 @@ pub struct DriveDigest {
 impl DriveDigest {
     pub fn build(tree: &ScanTree, scanned_at: i64) -> Self {
         let mut entries = Vec::new();
-        visit(tree, ROOT, tree.root_path(), 0, 0, &mut entries);
+        visit(tree, ROOT, tree.root_path(), 0, 0, false, &mut entries);
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         DriveDigest {
             version: VERSION,
@@ -105,18 +111,21 @@ fn forced_levels(parent: &str, name: &str) -> u8 {
 }
 
 /// 递归统计 `id` 的子项，满足条件的目录写进 `out`；返回子树里 exe 的最浅层数。
-/// `force`：本目录不管多深都记（> 0），子目录继续记 force - 1 层
-fn visit(tree: &ScanTree, id: NodeId, path: &str, depth: u8, force: u8, out: &mut Vec<DigestEntry>) -> u8 {
+/// `force`：本目录不管多深都记（> 0），子目录继续记 force - 1 层。
+/// `keep_root`：树根自己也按规则记（实时更新时重数的是盘里的一个目录，不是整块盘）
+fn visit(tree: &ScanTree, id: NodeId, path: &str, depth: u8, force: u8, keep_root: bool, out: &mut Vec<DigestEntry>) -> u8 {
     let mut exe_depth = NO_EXE;
     let mut exes: Vec<(u64, &str)> = Vec::new();
     let child_depth = depth.saturating_add(1);
+    // 只扫了一个目录时树根的名字是整条路径，按路径取
+    let own_name: Cow<str> = if id == ROOT { Cow::Owned(crate::scanner::path_file_name(path)) } else { Cow::Borrowed(tree.name(id)) };
     let parent_name = crate::scanner::path_file_name(path.rsplit_once(crate::scanner::SEP).map_or("", |(h, _)| h));
-    let kids_force = forced_levels(&parent_name, tree.name(id)).max(force.saturating_sub(1));
+    let kids_force = forced_levels(&parent_name, &own_name).max(force.saturating_sub(1));
     for child in tree.children(id) {
         let node = tree.node(child);
         let name = tree.name(child);
         if node.is_dir() {
-            let sub = visit(tree, child, &join_path(path, name), child_depth, kids_force, out);
+            let sub = visit(tree, child, &join_path(path, name), child_depth, kids_force, false, out);
             exe_depth = exe_depth.min(sub.saturating_add(1));
             continue;
         }
@@ -136,9 +145,9 @@ fn visit(tree: &ScanTree, id: NodeId, path: &str, depth: u8, force: u8, out: &mu
         }
     }
     let size = tree.node(id).size();
-    let wanted = id != ROOT
+    let wanted = (id != ROOT || keep_root)
         && size >= MIN_DIR
-        && (depth <= MAX_DEPTH || force > 0 || (size >= MIN_DEEP_CACHE && is_cache_name(&tree.name(id).to_ascii_lowercase())));
+        && (depth <= MAX_DEPTH || force > 0 || (size >= MIN_DEEP_CACHE && is_cache_name(&own_name.to_ascii_lowercase())));
     if wanted {
         exes.sort_by(|a, b| b.0.cmp(&a.0));
         out.push(DigestEntry {
@@ -182,6 +191,14 @@ fn covers(root: &str, path: &str) -> bool {
 // ---------------------------------------------------------------------------
 // 存取：app 数据目录下 archive/digest-<盘>.bin
 // ---------------------------------------------------------------------------
+
+/// 摘要文件「读出来、改、写回去」的整个过程都要拿着这把锁：实时更新、扫描完成、
+/// 删除同步可能同时改同一块盘的摘要，不锁的话后写的会把先写的冲掉
+static LOCK: Mutex<()> = Mutex::new(());
+
+fn lock() -> MutexGuard<'static, ()> {
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn file_key(root: &str) -> String {
     let key: String = root
@@ -242,6 +259,7 @@ fn prev_path(dir: &Path, root: &str) -> PathBuf {
 /// 存一次新扫描的摘要：原来那份留作「上次」，用来比较软件、文件夹的大小变化。
 /// 还没有「上次」时直接留；已经有了，原来那份够旧才换
 pub fn save_rotating(dir: &Path, digest: &DriveDigest) -> Result<(), String> {
+    let _guard = lock();
     let current = digest_path(dir, &digest.root);
     let has_prev = prev_path(dir, &digest.root).exists();
     let rotate = load(dir, &digest.root)
@@ -265,19 +283,23 @@ pub fn load_prev_all(dir: &Path) -> Vec<DriveDigest> {
 
 /// 新摘要比已存的旧（比如打开了一份早先的扫描记录）就不覆盖
 pub fn save_if_newer(dir: &Path, digest: &DriveDigest) -> Result<bool, String> {
+    let _guard = lock();
     if load(dir, &digest.root).is_some_and(|old| old.scanned_at.max(old.modified_at) > digest.scanned_at) {
         return Ok(false);
     }
     save(dir, digest).map(|_| true)
 }
 
-/// 删除了一些位置后同步对应盘的摘要
-pub fn forget_paths(dir: &Path, items: &[(String, u64)]) -> Result<(), String> {
+/// 删除了一些位置后同步对应盘的摘要。`live` 里的盘在实时更新：删掉的时候监听已经看到了，
+/// 摘要里记着的照样马上去掉，没记着的不再按传进来的大小去扣（实时更新已经重数过了，再扣就扣了两遍）
+pub fn forget_paths(dir: &Path, items: &[(String, u64)], live: &HashSet<String>) -> Result<(), String> {
+    let _guard = lock();
     let mut digests = load_all(dir);
     for d in digests.iter_mut() {
         let mut changed = false;
+        let fallback = !live.contains(&d.root);
         for (path, size) in items {
-            changed |= d.forget(path, *size);
+            changed |= d.forget(path, if fallback { *size } else { 0 });
         }
         if changed {
             d.modified_at = now_secs();
@@ -285,6 +307,17 @@ pub fn forget_paths(dir: &Path, items: &[(String, u64)]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// 读出一块盘的摘要交给 `f` 修改，`f` 返回 true 才写回去（记下改动时间）。没有这块盘的摘要时什么都不做
+pub fn update(dir: &Path, root: &str, f: impl FnOnce(&mut DriveDigest) -> bool) -> Result<bool, String> {
+    let _guard = lock();
+    let Some(mut d) = load(dir, root) else { return Ok(false) };
+    if !f(&mut d) {
+        return Ok(false);
+    }
+    d.modified_at = now_secs();
+    save(dir, &d).map(|_| true)
 }
 
 #[cfg(test)]

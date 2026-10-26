@@ -2,6 +2,7 @@ mod archive;
 mod commands;
 mod scanner;
 
+use commands::archive_live::LiveState;
 use commands::scan::ScanState;
 use commands::watcher::FsWatchState;
 use std::sync::Mutex;
@@ -11,6 +12,11 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ScanState(Mutex::new(None)))
         .manage(FsWatchState::new())
+        .manage(LiveState::default())
+        .setup(|app| {
+            commands::archive_live::start(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::scan::list_drives,
             commands::scan::scan_disk,

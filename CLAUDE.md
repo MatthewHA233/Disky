@@ -13,6 +13,7 @@
 
 - **Rust 路径工具**: `src-tauri/src/scanner/mod.rs` — `SEP` / `normalize_path` / `join_path` / `is_strict_ancestor` / `path_file_name`，处理 Windows `\` 与 Unix `/`（含根目录 `/` 特例）
 - **Rust 平台分支**: `#[cfg(windows)]` / `#[cfg(not(windows))]` 成对实现 —— 扫描枚举（`walk.rs` 的 `enumerate_dir`）、保护目录（`cleanup.rs` 的 `is_protected`）、右键系统集成（`context_menu.rs`：Explorer↔Finder、CMD/PowerShell↔Terminal、属性↔显示简介、PowerShell 选目录↔osascript choose folder）
+- **整盘监听（档案馆实时更新）**: `src-tauri/src/archive/fswatch.rs` —— Windows 自己调 `ReadDirectoryChangesW`（notify 6 缓冲只有 16KB，溢出时静默丢事件），外接盘（USB/SD）不盯，免得挡住「安全弹出」；其他平台用 notify（FSEvents）。变化落到摘要的逻辑在 `archive/digest/live.rs`，调度在 `commands/archive_live.rs`
 - **macOS 扫描跳过**: `walk.rs` 的 `should_skip_dir` 跳过 `/System/Volumes`（固件链接重复计数）、`/Volumes`（其他卷单独扫）、`/dev`
 - **AI 提示词**: `agent_workspace.rs` 用单一模板 + `PLATFORM_VARS` 词表渲染（`__OS__`、`__TRASH__` 等占位符），平台空间大户知识库表在 `HOG_TABLE`；改共享文案只改模板，改平台差异只改词表
 - **前端路径工具**: `src/lib/path.ts` — `SEP` / `IS_WINDOWS` / `TRASH_NAME`（回收站/废纸篓）/ `normalizePath` / `joinPath` / `basename` / `pathChain` 等，组件一律用它，不手写分隔符
