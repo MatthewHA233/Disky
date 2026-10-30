@@ -9,8 +9,8 @@ import type {
 
 /** AI 把握不低于该值才直接放进箱子，否则留在待整理、只作为猜测 */
 export const AI_MIN_CONFIDENCE = 0.6;
-/** 与后端一致：待整理目录树只列不小于该大小的位置 */
-export const MIN_FOLDER = 200 * 1024 * 1024;
+/** 与后端一致：待整理目录树只列不小于该大小的位置（文件和文件夹一样），更小的合成一行 */
+export const MIN_FOLDER = 50 * 1024 * 1024;
 export const JUNK_KINDS: readonly PartKind[] = ["cache", "residue"];
 export const CATEGORIES: readonly ArchiveCategory[] = ["software", "personal", "devenv"];
 
@@ -339,6 +339,36 @@ export function computeStats(
     bySource,
     drives: [...driveStats.values()],
   };
+}
+
+/** 一个位置下没单独显示的部分（小于下限的子位置、没记进摘要的零散文件），点开时去后端现场列 */
+export interface Loose {
+  size: number;
+  /** 树上单独显示着、或者放进了箱子的子位置：不用再列 */
+  skip: string[];
+  /** 树上有、小到不显示的子位置和扣过箱子后的大小 */
+  known: [string, number][];
+}
+
+/** 零散的不到这个就不单独给一行 */
+export const LOOSE_SHOWN = 1024 * 1024;
+
+export function looseOf(ix: ArchiveIndex, n: FolderNode, sizes: Map<string, number>): Loose {
+  const shown = new Set(visibleKids(ix, n, sizes).map((k) => k.key));
+  const skip: string[] = [];
+  const known: [string, number][] = [];
+  let size = sizes.get(n.key) ?? 0;
+  for (const k of n.kids) {
+    if (shown.has(k.key)) {
+      size -= sizes.get(k.key) ?? 0;
+      skip.push(k.path);
+    } else if (placementOf(ix, k.key)) {
+      skip.push(k.path);
+    } else {
+      known.push([k.path, sizes.get(k.key) ?? 0]);
+    }
+  }
+  return { size: Math.max(0, size), skip, known };
 }
 
 /** 目录树里一个位置下还要显示的子位置：没放进箱子、扣完后仍不小于下限 */

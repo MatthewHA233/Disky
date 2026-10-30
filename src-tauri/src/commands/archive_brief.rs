@@ -202,6 +202,7 @@ mod tests {
             digests: Vec::new(),
             installed: Vec::new(),
             inv: Inventory {
+                claimed: Default::default(),
                 drives: vec![DriveInfo { root: "D:".into(), scanned_at: 1, total: 100 * GB, live: false }],
                 apps: vec![app("app:steam", "Steam", Some("game"), 5 * GB), app("app:odd", "Odd", None, 2 * GB), app("app:ai", "AiPlaced", None, GB)],
                 tree: vec![folder("D:", 0, 50 * GB, vec![folder("D:\\stuff", 1, 30 * GB, Vec::new()), folder("D:\\placed", 1, 10 * GB, Vec::new())])],

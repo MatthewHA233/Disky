@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ChildrenPage, DirEntry, DriveInfo, Footprint, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, ChatSession, CliDetection, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage, ArchiveModel, ArchiveBoxRow, ArchiveAiPlacement, ArchiveClassifyItem, ArchiveCategory, ArchiveCacheCheck, ArchiveCheckItem, ClaimKind, ArchiveAttributeResult, ArchiveMode, ArchiveNote, SnapshotInfo, LoadSnapshotResult } from "../types";
+import type { ChildrenPage, DirEntry, DriveInfo, Footprint, ItemInfo, DeleteResult, ScanRecord, DiffEntry, LoadScanResult, AiSettings, ChatMessage, ChatSession, CliDetection, Note, AiAnalysis, AnalyzePathInput, EmptyFolderResult, MoveResult, Tag, FileTag, TaggedPath, CleanupLogPage, ArchiveModel, ArchiveBoxRow, ArchiveAiPlacement, ArchiveClassifyItem, ArchiveCategory, ArchiveCacheCheck, ArchiveCheckItem, ClaimKind, ArchiveAttributeResult, ArchiveMode, ArchiveNote, ArchiveLooseList, SnapshotInfo, LoadSnapshotResult } from "../types";
 
 export const listDrives = () => invoke<DriveInfo[]>("list_drives");
 
@@ -147,6 +147,9 @@ export const archiveRenameBox = (id: string, name: string) => invoke<void>("arch
 export const archiveDeleteBox = (id: string) => invoke<void>("archive_delete_box", { id });
 export const archiveIcons = (sources: string[]) => invoke<(string | null)[]>("archive_icons", { sources });
 export const archiveForget = (items: [string, number][]) => invoke<void>("archive_forget", { items });
+/** 现场列一个文件夹里没单独列出的东西；skip / known 见 looseOf */
+export const archiveLoose = (path: string, skip: string[], known: [string, number][]) =>
+  invoke<ArchiveLooseList>("archive_loose", { path, skip, known });
 export const archiveAiClassify = (items: ArchiveClassifyItem[], category: ArchiveCategory) =>
   invoke<ArchiveAiPlacement[]>("archive_ai_classify", { items, category });
 export const archiveAiCheck = (items: ArchiveCheckItem[]) => invoke<ArchiveCacheCheck[]>("archive_ai_check", { items });

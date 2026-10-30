@@ -125,6 +125,7 @@ fn drives() -> Vec<DriveDigest> {
         e("D:\\my files", 100 * GB, 3, &[]),
         e("D:\\my files\\game", 40 * GB, 2, &[]),
         e("D:\\my files\\notes", 100 * MB, N, &[]),
+        e("D:\\my files\\todo", 30 * MB, N, &[]),
         e("D:\\Godot_v4.4.1-stable_win64", 100 * MB, 0, &["Godot_v4.4.1-stable_win64.exe"]),
         e("D:\\xwechat_files", 3 * GB, N, &[]),
         e("D:\\Temp", 2 * GB, 0, &["installer.exe"]),
@@ -468,8 +469,8 @@ fn unclaimed_tree_keeps_only_unknown_space() {
     assert_eq!(names, vec!["my files", "Games", "xwechat_files", "Photos"], "按剩余大小降序，已归属的不出现");
     let my = &d.kids[0];
     assert_eq!(my.rest, 100 * GB);
-    assert_eq!(my.kids.len(), 1, "小于 200MB 的不列");
-    assert_eq!(my.kids[0].name, "game");
+    let kids: Vec<&str> = my.kids.iter().map(|k| k.name.as_str()).collect();
+    assert_eq!(kids, ["game", "notes"], "不到 50MB 的不列");
     assert_eq!(d.rest, 200 * GB - 50 * GB - 800 * MB - 100 * MB - GB - 2 * GB - 3 * GB - 10 * GB - 400 * MB - 800 * MB);
 
     let c = inv.tree.iter().find(|n| n.path == "C:").unwrap();

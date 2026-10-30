@@ -1,11 +1,13 @@
-import { memo, type ReactNode } from "react";
-import { ChevronRight, HardDrive, Loader2 } from "lucide-react";
+import { memo, useState, type ReactNode } from "react";
+import { ChevronRight, Files, HardDrive, Loader2 } from "lucide-react";
 import { AiIcon } from "../ui/AiIcon";
-import type { ArchiveBoxRow, ArchiveCategory } from "../../types";
+import type { ArchiveBoxRow, ArchiveCategory, ArchiveLooseList } from "../../types";
 import { formatSize } from "../../lib/format";
-import { driveLabel, driveOf } from "../../lib/path";
+import { archiveLoose, showInExplorer } from "../../lib/invoke";
+import { IS_WINDOWS, SEP, driveLabel, driveOf, parentPath } from "../../lib/path";
 import {
-  appSize, growthOf, guessOf, itemSize, visibleKids, type ArchiveIndex, type ArchiveStats, type FolderNode, type Guess, type Item, type Placement,
+  LOOSE_SHOWN, MIN_FOLDER, appSize, growthOf, guessOf, itemSize, looseOf, visibleKids,
+  type ArchiveIndex, type ArchiveStats, type FolderNode, type Guess, type Item, type Loose, type Placement,
 } from "../../lib/archiveModel";
 import { cn } from "../../lib/utils";
 import { GrowthText, ItemCell, itemTooltip } from "./ItemViews";
@@ -80,6 +82,113 @@ function GuessButton({ guess, box, onAccept }: { guess: Guess; box: ArchiveBoxRo
   );
 }
 
+const FILE_MANAGER = IS_WINDOWS ? "资源管理器" : "访达";
+/** 树上单独显示的下限（MB），文件和文件夹一样 */
+const SHOWN_MB = MIN_FOLDER / 1024 / 1024;
+
+/** 盘根写成 D:\ 而不是 D: */
+const dirLabel = (dir: string) => (dir.endsWith(":") ? dir + SEP : dir);
+
+/** 名字，下面一行小字是所在目录：放不下时从左边省略，留下离它最近的几层 */
+function NameLines({ name, dir }: { name: ReactNode; dir: string | null }) {
+  return (
+    <span className="flex-1 min-w-0 flex flex-col">
+      <span className="truncate text-[13px] leading-[18px]">{name}</span>
+      {dir && (
+        <span dir="rtl" className="truncate text-left text-[11px] leading-[14px] text-text-faint">
+          <bdi dir="ltr">{dirLabel(dir)}</bdi>
+        </span>
+      )}
+    </span>
+  );
+}
+
+const UNRECORDED = {
+  rescan: { tag: "重扫后单独列", why: "上次扫描时档案还没记到这一项，所以树上没单独列出来、也拖不进箱子。重新扫描这块盘后就会单独列出来" },
+  deep: { tag: "太深，没单独列", why: "扫描档案只记到第 6 层的文件夹、第 7 层的文件，这一项更深，所以树上没单独列出来" },
+} as const;
+
+/** 文件夹展开后的最后一行：每项都不到下限、没单独列在树上的文件和文件夹。点开时现场去磁盘上列这一层 */
+function LooseRow({ node, loose }: { node: FolderNode; loose: Loose }) {
+  const [open, setOpen] = useState(false);
+  const [list, setList] = useState<ArchiveLooseList | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    setList(null);
+    setError(null);
+    archiveLoose(node.path, loose.skip, loose.known).then(setList).catch((e) => setError(String(e)));
+  };
+  const pad = 4 + (node.depth + 1) * 16;
+  const note = "h-7 flex items-center text-xs text-text-faint";
+  return (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        title={`树上单独列 ${SHOWN_MB} MB 以上的文件和文件夹，不到 ${SHOWN_MB} MB 的合在这一行。点开现场去磁盘上列出来`}
+        className="h-10 flex items-center gap-1.5 pr-2 rounded select-none cursor-pointer text-text-dim hover:bg-hover"
+        style={{ paddingLeft: pad }}
+        onClick={toggle}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
+      >
+        <span className="w-5 h-5 shrink-0 grid place-items-center text-text-faint">
+          <ChevronRight className={cn("w-3 h-3 transition-transform", open && "rotate-90")} />
+        </span>
+        <Files className="w-4 h-4 shrink-0 text-text-faint" />
+        <NameLines name={`不到 ${SHOWN_MB} MB 的文件和文件夹`} dir={node.path} />
+        <span className="shrink-0 text-xs">{formatSize(loose.size)}</span>
+      </div>
+      {open && (
+        <div style={{ paddingLeft: pad + 16 }}>
+          {error ? (
+            <p className={cn(note, "text-danger")}>没能列出来：{error}</p>
+          ) : !list ? (
+            <p className={cn(note, "gap-1.5 pl-1")}><Loader2 className="w-3 h-3 animate-spin" />正在列…</p>
+          ) : list.items.length === 0 && list.tiny === 0 ? (
+            <p className={cn(note, "pl-1")}>这里已经没有别的东西了</p>
+          ) : (
+            <>
+              {list.items.map((i) => {
+                const u = i.unrecorded ? UNRECORDED[i.unrecorded] : null;
+                return (
+                  <div
+                    key={i.path}
+                    title={`${i.path}\n${u ? `${u.why}\n` : ""}双击在${FILE_MANAGER}里显示`}
+                    className="h-10 flex items-center gap-1.5 pl-1 pr-2 rounded select-none hover:bg-hover"
+                    onDoubleClick={() => { showInExplorer(i.path).catch(() => {}); }}
+                  >
+                    <SmallFolder isDir={i.is_dir} />
+                    <NameLines name={i.name} dir={parentPath(i.path)} />
+                    {u && <span className="shrink-0 text-[11px] text-text-dim">{u.tag}</span>}
+                    <span className="shrink-0 text-xs text-text-dim">{formatSize(i.size)}</span>
+                  </div>
+                );
+              })}
+              {list.more > 0 && <p className={cn(note, "pl-1")}>还有 {list.more} 项，一共 {formatSize(list.more_size)}</p>}
+              {list.tiny > 0 && (
+                <div
+                  title="这一层里每项都不到 1 MB 的文件和文件夹，只统计个数和大小"
+                  className="h-7 flex items-center gap-1.5 pl-1 pr-2 text-text-faint"
+                >
+                  <Files className="w-[18px] h-4 shrink-0" />
+                  <span className="flex-1 min-w-0 truncate text-[13px]">不到 1 MB 的 {list.tiny} 项</span>
+                  <span className="shrink-0 text-xs">{formatSize(list.tiny_size)}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 interface RowProps {
   node: FolderNode;
   ix: ArchiveIndex;
@@ -98,6 +207,8 @@ interface RowProps {
 const FolderRow = memo(function FolderRow(props: RowProps) {
   const { node, ix, sizes, boxes, expanded, openKey, draggingKey, onToggle, onAccept, showGuesses } = props;
   const kids = visibleKids(ix, node, sizes);
+  const loose = node.isDir ? looseOf(ix, node, sizes) : null;
+  const showLoose = loose != null && loose.size >= LOOSE_SHOWN;
   const open = expanded.has(node.key);
   const isDrive = node.depth === 0;
   const size = sizes.get(node.key) ?? 0;
@@ -111,14 +222,15 @@ const FolderRow = memo(function FolderRow(props: RowProps) {
         onClick={isDrive ? () => onToggle(node.key) : undefined}
         title={node.path}
         className={cn(
-          "h-8 flex items-center gap-1.5 pr-2 rounded select-none transition-colors",
+          isDrive ? "h-8" : "h-10",
+          "flex items-center gap-1.5 pr-2 rounded select-none transition-colors",
           openKey === node.key ? "bg-photon/10" : "hover:bg-hover",
           draggingKey === node.key && "opacity-40",
           isDrive && "font-semibold"
         )}
         style={{ paddingLeft: 4 + node.depth * 16 }}
       >
-        {kids.length > 0 ? (
+        {kids.length > 0 || showLoose ? (
           <button
             type="button"
             className="w-5 h-5 shrink-0 grid place-items-center rounded text-text-faint hover:bg-hover hover:text-textMain"
@@ -132,13 +244,18 @@ const FolderRow = memo(function FolderRow(props: RowProps) {
           <span className="w-5 shrink-0" />
         )}
         {isDrive ? <HardDrive className="w-[18px] h-[18px] shrink-0 text-text-dim" /> : <SmallFolder isDir={node.isDir} />}
-        <span className="flex-1 min-w-0 truncate text-[13px]">{isDrive ? driveLabel(driveOf(node.path)) : node.name}</span>
+        {isDrive ? (
+          <span className="flex-1 min-w-0 truncate text-[13px]">{driveLabel(driveOf(node.path))}</span>
+        ) : (
+          <NameLines name={node.name} dir={parentPath(node.path)} />
+        )}
         {guess && guessBox && <GuessButton guess={guess} box={guessBox} onAccept={() => onAccept(node.key, guess.box)} />}
         {!open && kids.length > 0 && <span className="shrink-0 text-[11px] text-text-faint">{kids.length} 项</span>}
         {grown !== undefined && <GrowthText grown={grown} className="shrink-0 text-[11px]" />}
         <span className="shrink-0 text-xs text-text-dim">{formatSize(size)}</span>
       </div>
       {open && kids.map((k) => <FolderRow key={k.key} {...props} node={k} />)}
+      {open && loose && showLoose && <LooseRow node={node} loose={loose} />}
     </>
   );
 });

@@ -31,8 +31,8 @@ const MIN_CACHE: u64 = 5 * MB;
 /// 别名命中、或名字完全相同才算强匹配（用户目录、盘根下只认这种）
 const ALIAS_MATCH: usize = 2000;
 const STRONG_MATCH: usize = 900;
-/// 待整理目录树只列出不小于该大小的位置
-pub const MIN_NODE: u64 = 200 * MB;
+/// 待整理目录树只列出不小于该大小的位置（文件和文件夹一样）；和摘要记大文件的下限一致，记下的都能单独整理
+pub const MIN_NODE: u64 = 50 * MB;
 const WINDOWS: bool = cfg!(windows);
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +115,16 @@ pub struct Inventory {
     pub drives: Vec<DriveInfo>,
     pub apps: Vec<AppItem>,
     pub tree: Vec<FolderNode>,
+    #[serde(skip)]
+    pub claimed: Claimed,
+}
+
+/// 归到软件名下的位置（小写路径）：整个归走的，和下面有一部分归走的（归走了多少）。
+/// 现场列文件夹里没单独列出的东西时扣掉它们，和树上的数对得上
+#[derive(Debug, Clone, Default)]
+pub struct Claimed {
+    pub whole: HashSet<String>,
+    pub below: HashMap<String, u64>,
 }
 
 /// 运行环境里影响识别的信息
@@ -1369,6 +1379,7 @@ impl<'a> Builder<'a> {
             drives: digests.iter().map(|d| DriveInfo { root: d.root.clone(), scanned_at: d.scanned_at, total: d.total, live: false }).collect(),
             apps,
             tree,
+            claimed: Claimed { whole: owner.into_keys().collect(), below: claimed_below },
         }
     }
 

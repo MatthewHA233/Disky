@@ -323,6 +323,27 @@ export interface ArchiveFolder {
   kids: ArchiveFolder[];
 }
 
+/** 文件夹树里没单独列出的一项（现场去磁盘上列的） */
+export interface ArchiveLooseItem {
+  path: string;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  /** 够大、本该单独列在树上，却没记进扫描档案：rescan（档案旧了，重扫这块盘就有）/ deep（太深，扫描不记这么深） */
+  unrecorded?: "rescan" | "deep";
+}
+
+export interface ArchiveLooseList {
+  /** 从大到小，都不小于 1MB */
+  items: ArchiveLooseItem[];
+  /** 超出条数没列出来的还有几项、一共多大 */
+  more: number;
+  more_size: number;
+  /** 不到 1MB 的几项、一共多大 */
+  tiny: number;
+  tiny_size: number;
+}
+
 export interface ArchiveDrive {
   root: string;
   /** Unix 秒 */

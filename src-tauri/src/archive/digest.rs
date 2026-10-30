@@ -20,12 +20,33 @@ const MIN_DIR: u64 = MB;
 const MAX_DEPTH: u8 = 6;
 /// 更深的目录只记名字像缓存、且不小于该大小的
 const MIN_DEEP_CACHE: u64 = 5 * MB;
-/// 浅层的大文件（pagefile.sys、视频）也记下，方便归类和显示
+/// 大文件（pagefile.sys、视频、虚拟机镜像）也记下，方便归类和显示：
+/// 记到记着的文件夹里直接放着的那一层
 const MIN_FILE: u64 = 50 * MB;
-const MAX_FILE_DEPTH: u8 = 3;
+const MAX_FILE_DEPTH: u8 = MAX_DEPTH + 1;
 /// 每个目录最多记几个 exe 名（找图标、判断软件是否已卸载用）
 const MAX_EXES: usize = 6;
-const VERSION: u32 = 3;
+/// 4：文件从记到第 3 层改成记到第 7 层。3 还能读（只是深处的大文件没记），重扫一次就是 4
+const VERSION: u32 = 4;
+const MIN_VERSION: u32 = 3;
+
+fn readable(d: &DriveDigest) -> bool {
+    (MIN_VERSION..=VERSION).contains(&d.version)
+}
+
+/// 这个版本的摘要文件记到第几层
+pub fn files_recorded_to(version: u32) -> u8 {
+    if version >= 4 {
+        MAX_FILE_DEPTH
+    } else {
+        3
+    }
+}
+
+/// 现在扫描的话，这一层够大的文件夹 / 文件会不会记下（摘要里没有它，重扫一次能不能补上）
+pub fn records(is_dir: bool, depth: u8) -> bool {
+    depth <= if is_dir { MAX_DEPTH } else { MAX_FILE_DEPTH }
+}
 
 mod live;
 pub use live::{exists, measure, Change, LayerCache, Remeasure, Unit};
@@ -224,9 +245,7 @@ pub fn save(dir: &Path, digest: &DriveDigest) -> Result<(), String> {
 
 pub fn load(dir: &Path, root: &str) -> Option<DriveDigest> {
     let blob = std::fs::read(digest_path(dir, root)).ok()?;
-    bincode::deserialize::<DriveDigest>(&blob)
-        .ok()
-        .filter(|d| d.version == VERSION)
+    bincode::deserialize::<DriveDigest>(&blob).ok().filter(readable)
 }
 
 /// 读出所有盘的摘要；损坏或旧版本的跳过
@@ -243,7 +262,7 @@ pub fn load_all(dir: &Path) -> Vec<DriveDigest> {
         })
         .filter_map(|e| std::fs::read(e.path()).ok())
         .filter_map(|blob| bincode::deserialize::<DriveDigest>(&blob).ok())
-        .filter(|d| d.version == VERSION)
+        .filter(readable)
         .collect();
     all.sort_by(|a, b| a.root.cmp(&b.root));
     all
@@ -277,7 +296,7 @@ pub fn load_prev_all(dir: &Path) -> Vec<DriveDigest> {
         .filter(|e| e.file_name().to_string_lossy().starts_with("prev-"))
         .filter_map(|e| std::fs::read(e.path()).ok())
         .filter_map(|blob| bincode::deserialize::<DriveDigest>(&blob).ok())
-        .filter(|d| d.version == VERSION)
+        .filter(readable)
         .collect()
 }
 

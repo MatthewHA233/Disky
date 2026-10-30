@@ -38,6 +38,7 @@ pub fn run() {
             commands::archive::archive_delete_box,
             commands::archive::archive_icons,
             commands::archive::archive_forget,
+            commands::archive::archive_loose,
             commands::archive::archive_ai_classify,
             commands::archive::archive_ai_check,
             commands::cleanup::get_items_info,

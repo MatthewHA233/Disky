@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use super::digest::DriveDigest;
+use super::digest::{self, DigestEntry, DriveDigest};
 use super::inventory::{FolderNode, Inventory};
 use crate::scanner::is_strict_ancestor;
 
@@ -22,22 +22,26 @@ pub struct Growth {
     pub since: HashMap<String, i64>,
 }
 
-fn sizes(digests: &[DriveDigest]) -> HashMap<String, u64> {
-    digests.iter().flat_map(|d| d.entries.iter()).map(|e| (e.path.to_ascii_lowercase(), e.size)).collect()
+fn entries(digests: &[DriveDigest]) -> HashMap<String, &DigestEntry> {
+    digests.iter().flat_map(|d| d.entries.iter()).map(|e| (e.path.to_ascii_lowercase(), e)).collect()
 }
 
 pub fn compute(inv: &Inventory, current: &[DriveDigest], prev: &[DriveDigest]) -> Growth {
-    let cur = sizes(current);
-    let old = sizes(prev);
-    let roots: Vec<String> = prev.iter().map(|d| d.root.to_ascii_lowercase()).collect();
-    // 这块盘有上次的摘要才比；位置在上次里没有，说明那时还不到 1 MB，算从 0 长起来的
+    let cur = entries(current);
+    let old = entries(prev);
+    // 各盘上次的摘要，和它把文件记到第几层
+    let roots: Vec<(String, u8)> = prev.iter().map(|d| (d.root.to_ascii_lowercase(), digest::files_recorded_to(d.version))).collect();
+    // 这块盘有上次的摘要才比；位置在上次里没有，说明那时还不到 1 MB（文件是不到 50 MB），算从 0 长起来的。
+    // 上次那份的文件只记到更浅的层时，更深处的文件上次没记不等于没有，不比
     let comparable = |path: &str| {
         let l = path.to_ascii_lowercase();
-        roots.iter().any(|r| *r == l || is_strict_ancestor(r, &l))
+        let Some(&(_, files_to)) = roots.iter().find(|(r, _)| *r == l || is_strict_ancestor(r, &l)) else { return false };
+        old.contains_key(&l) || cur.get(&l).is_none_or(|e| e.is_dir || e.depth <= files_to)
     };
+    let size = |m: &HashMap<String, &DigestEntry>, l: &str| m.get(l).map_or(0, |e| e.size) as i64;
     let delta = |path: &str| {
         let l = path.to_ascii_lowercase();
-        cur.get(&l).copied().unwrap_or(0) as i64 - old.get(&l).copied().unwrap_or(0) as i64
+        size(&cur, &l) - size(&old, &l)
     };
 
     let mut g = Growth { since: prev.iter().map(|d| (d.root.clone(), d.scanned_at)).collect(), ..Default::default() };
@@ -65,7 +69,7 @@ pub fn compute(inv: &Inventory, current: &[DriveDigest], prev: &[DriveDigest]) -
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
-    use crate::archive::digest::{DigestEntry, NO_EXE};
+    use crate::archive::digest::NO_EXE;
     use crate::archive::inventory::{AppItem, DriveInfo, Part};
     use crate::scanner::classify::Kind;
 
@@ -102,6 +106,7 @@ mod tests {
             parts,
         };
         let inv = Inventory {
+            claimed: Default::default(),
             drives: vec![DriveInfo { root: "C:".into(), scanned_at: 2, total: 1 << 40, live: false }],
             apps: vec![
                 // 外层 Steam 长了 3 GB，里面的 htmlcache 不重复算
@@ -135,5 +140,39 @@ mod tests {
         assert_eq!(g.folders.get("dir:C:\\Photos"), Some(&(-(300 * MB as i64))), "变小为负");
         assert!(!g.folders.contains_key("dir:C:"), "盘根不报");
         assert_eq!(g.since.get("C:"), Some(&1));
+    }
+
+    #[test]
+    fn deep_files_are_not_compared_with_a_digest_that_did_not_record_them() {
+        let node = |path: &str, is_dir: bool| FolderNode {
+            key: format!("dir:{path}"),
+            path: path.into(),
+            name: path.into(),
+            is_dir,
+            depth: path.matches('\\').count() as u8,
+            rest: 0,
+            hint: None,
+            kids: Vec::new(),
+        };
+        let deep = "C:\\a\\b\\c\\d\\movie.mkv";
+        let shallow = "C:\\a\\new.iso";
+        let inv = Inventory {
+            claimed: Default::default(),
+            drives: Vec::new(),
+            apps: Vec::new(),
+            tree: vec![FolderNode { kids: vec![node(deep, false), node(shallow, false), node("C:\\a\\Fresh", true)], ..node("C:", true) }],
+        };
+        let mut current = digest("C:", 2, &[("C:\\a\\Fresh", 300 * MB)]);
+        current.version = 4;
+        for path in [deep, shallow] {
+            current.entries.push(DigestEntry { path: path.into(), size: 2000 * MB, depth: path.matches('\\').count() as u8, is_dir: false, exe_depth: NO_EXE, exes: Vec::new() });
+        }
+        let old = digest("C:", 1, &[]);
+        let g = compute(&inv, &[current.clone()], &[old.clone()]);
+        assert!(!g.folders.contains_key(&format!("dir:{deep}")), "上次那份只记到第 3 层的文件，第 5 层的没法比");
+        assert_eq!(g.folders.get(&format!("dir:{shallow}")), Some(&(2000 * MB as i64)), "浅层的照样算新出现的");
+        assert_eq!(g.folders.get("dir:C:\\a\\Fresh"), Some(&(300 * MB as i64)));
+        let g = compute(&inv, &[current], &[DriveDigest { version: 4, ..old }]);
+        assert_eq!(g.folders.get(&format!("dir:{deep}")), Some(&(2000 * MB as i64)), "上次也记到深处时就能比");
     }
 }

@@ -3,17 +3,20 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use super::scan::ScanState;
-use crate::archive::inventory::{self, AppItem, DriveInfo, Env, FolderNode, Override};
+use crate::archive::inventory::{self, AppItem, Claimed, DriveInfo, Env, FolderNode, Override};
+use crate::archive::loose::{self, LooseList};
 use crate::archive::store::{self, AiPlacement, BoxRow, CacheCheck, ClaimRow, UserPlacement};
 use crate::archive::growth::{self, Growth};
 use crate::archive::{digest, icons, registry};
 use crate::scanner::classify::{classify, Footprint, Kind};
+use crate::scanner::normalize_path;
 
 #[tauri::command]
 pub fn classify_footprints(state: State<'_, ScanState>) -> Result<Vec<Footprint>, String> {
@@ -71,6 +74,9 @@ pub(crate) fn overrides(rows: Vec<ClaimRow>) -> Vec<Override> {
 /// 与前端 AI_MIN_CONFIDENCE 一致
 const AI_CLAIM_MIN: f64 = 0.6;
 
+/// 上次给前端的清单里哪些位置归到了软件名下：列文件夹里零散的东西时扣掉
+static CLAIMED: Mutex<Option<Claimed>> = Mutex::new(None);
+
 #[tauri::command]
 pub async fn get_archive(app: AppHandle) -> Result<ArchiveModel, String> {
     tokio::task::spawn_blocking(move || {
@@ -79,6 +85,7 @@ pub async fn get_archive(app: AppHandle) -> Result<ArchiveModel, String> {
         let conn = db(&app)?;
         let inv = inventory::build(&digests, &installed, &Env::current(), &overrides(store::claims(&conn)?));
         let growth = growth::compute(&inv, &digests, &digest::load_prev_all(&digest_dir(&app)?));
+        *CLAIMED.lock().unwrap_or_else(|e| e.into_inner()) = Some(inv.claimed);
         let live = super::archive_live::watched(&app);
         Ok(ArchiveModel {
             growth,
@@ -90,6 +97,25 @@ pub async fn get_archive(app: AppHandle) -> Result<ArchiveModel, String> {
             ai: store::ai_placements(&conn)?,
             checks: store::checks(&conn)?,
         })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 文件夹树里一个位置下没单独列出的东西，现场去磁盘上列这一层。
+/// `skip`：树上单独列着或放进了箱子的子位置；`known`：树上有、小到不单独显示的子位置和前端算的大小
+#[tauri::command]
+pub async fn archive_loose(app: AppHandle, path: String, skip: Vec<String>, known: Vec<(String, u64)>) -> Result<LooseList, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = normalize_path(&path);
+        let digests = digest::load_all(&digest_dir(&app)?);
+        if !digests.iter().any(|d| d.root.eq_ignore_ascii_case(&path) || d.covers(&path)) {
+            return Err("这个位置不在扫过的盘上".into());
+        }
+        let claimed = CLAIMED.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+        let skip = skip.iter().map(|p| p.to_ascii_lowercase()).collect();
+        let known = known.into_iter().map(|(p, s)| (p.to_ascii_lowercase(), s)).collect();
+        Ok(loose::list(&path, &digests, &claimed, &skip, &known))
     })
     .await
     .map_err(|e| e.to_string())?
